@@ -1,8 +1,7 @@
 import os
 import json
 import ctypes
-
-from core.models import Settings, load_settings, save_settings
+import tempfile
 
 from utils.win_automation import (
     kernel32,
@@ -13,6 +12,51 @@ from utils.win_automation import (
 SETTINGS_FILE = "nwn_settings.json"
 SESSIONS_FILE = "nwn_sessions.json"
 
+def read_json(path: str, default: dict | None = None) -> dict | None:
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def write_json_atomic(
+    path: str,
+    data: dict,
+    *,
+    indent: int | None = None,
+    ensure_ascii: bool = False,
+) -> None:
+    dir_path = os.path.dirname(path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".tmp", dir=dir_path or None)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent, ensure_ascii=ensure_ascii)
+            f.flush()
+            os.fsync(f.fileno())
+        fd = None
+        os.replace(tmp_path, path)
+        tmp_path = None
+    except Exception:
+        pass
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
 
 class SessionManager:
     def __init__(self, filepath: str):
@@ -20,20 +64,10 @@ class SessionManager:
         self.sessions: dict[str, int] = self.load()
 
     def load(self) -> dict:
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+        return read_json(self.filepath, default={}) or {}
 
     def save(self) -> None:
-        try:
-            with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(self.sessions, f)
-        except Exception:
-            pass
+        write_json_atomic(self.filepath, self.sessions)
 
     def add(self, key: str, pid: int) -> None:
         self.sessions[key] = pid

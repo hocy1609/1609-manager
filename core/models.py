@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 import re
-import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any
 
+from core.storage import read_json, write_json_atomic
 CDKEY_PATTERN = re.compile(r"^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){6}$")
 
 
@@ -208,21 +207,15 @@ class Settings:
 
 
 def load_settings(path: str, fallback_docs: str, fallback_exe: str) -> Settings:
-    if not os.path.exists(path):
+    data = read_json(path, default=None)
+    if data is None:
         return Settings.defaults(fallback_docs, fallback_exe)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Settings.from_dict(data, fallback_docs, fallback_exe)
-    except Exception:
-        return Settings.defaults(fallback_docs, fallback_exe)
+    return Settings.from_dict(data, fallback_docs, fallback_exe)
 
 
 def save_settings(path: str, settings: Settings) -> None:
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(settings.to_dict(), f, indent=4, ensure_ascii=False)
+        write_json_atomic(path, settings.to_dict(), indent=4, ensure_ascii=False)
     except Exception:
         # Silent failure by design to avoid crashing UI; caller can log
         pass
