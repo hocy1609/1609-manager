@@ -31,6 +31,52 @@ class CraftManager:
             app: Reference to the NWNManagerApp instance
         """
         self.app = app
+
+    def initialize_state(self):
+        """Initialize craft-related state on the app (idempotent)."""
+        if getattr(self.app, "_craft_state_initialized", False):
+            return
+
+        import tkinter as tk
+        from app import CraftState
+
+        self.app.craft_state = CraftState(
+            running=False,
+            recorded_macro=[],
+            vars={
+                "delay_action": tk.DoubleVar(value=2.5),
+                "delay_first": tk.DoubleVar(value=1.5),
+                "delay_seq": tk.DoubleVar(value=1.0),
+                "delay_r": tk.DoubleVar(value=7.0),
+                "repeat_before_r": tk.IntVar(value=5),
+                "sequence": tk.StringVar(value="491"),
+                "action_key": tk.StringVar(value="F10"),
+                "potion_limit": tk.IntVar(value=100),
+                "selected_potion": tk.StringVar(value=""),
+                "selected_macro": tk.StringVar(value=""),
+                "macro_speed": tk.DoubleVar(value=1.0),
+                "macro_repeats": tk.IntVar(value=1),
+            },
+            log_path=tk.StringVar(value=""),
+            log_position=0,
+            real_count=0,
+            macro_playback_stop=False,
+            potions_count=0,
+            thread=None,
+        )
+
+        # Log monitoring for potion counting
+        default_log = os.path.join(
+            os.path.expanduser("~"),
+            "Documents",
+            "Neverwinter Nights",
+            "logs",
+            "nwclientLog1.txt",
+        )
+        if os.path.exists(default_log):
+            self.app.craft_state.log_path.set(default_log)
+
+        self.app._craft_state_initialized = True
     
     def _craft_row(self, parent, row, label, var):
         """Create a settings row in grid."""
