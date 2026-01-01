@@ -2,6 +2,7 @@ import os
 import json
 import ctypes
 import tempfile
+import logging
 
 from utils.win_automation import (
     kernel32,
@@ -44,7 +45,7 @@ def write_json_atomic(
         os.replace(tmp_path, path)
         tmp_path = None
     except Exception:
-        pass
+        logging.exception("Failed to write JSON atomically")
     finally:
         if fd is not None:
             try:

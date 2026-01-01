@@ -11,6 +11,7 @@ import tempfile
 import atexit
 import ctypes
 import ctypes.wintypes
+import logging
 from datetime import datetime
 
 import tkinter as tk
@@ -62,6 +63,28 @@ from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
 
 
+def get_app_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_default_log_path(data_dir: str) -> str:
+    return os.path.join(data_dir, "nwn_manager.log")
+
+
+def configure_logging(log_path: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    except Exception:
+        logging.exception("Failed to ensure log directory exists")
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+
 set_dpi_awareness()
 
 
@@ -76,10 +99,7 @@ class NWNManagerApp:
         self.root.configure(bg=COLORS["bg_root"])
         self.root.overrideredirect(True)
 
-        if getattr(sys, "frozen", False):
-            self.app_dir = os.path.dirname(sys.executable)
-        else:
-            self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        self.app_dir = get_app_dir()
 
         # Choose a writable data directory for settings/sessions/logs.
         # Portable-only policy: store persistent data in the program folder (`app_dir`).
@@ -97,11 +117,11 @@ class NWNManagerApp:
                     parent=self.root,
                 )
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
 
         self.settings_path = os.path.join(self.data_dir, SETTINGS_FILE)
         self.sessions_path = os.path.join(self.data_dir, SESSIONS_FILE)
-        self.log_path = os.path.join(self.data_dir, "nwn_manager.log")
+        self.log_path = get_default_log_path(self.data_dir)
 
         # If there's a default settings file bundled (ONEDIR: next to exe; ONEFILE: inside _MEIPASS),
         # copy it to the writable data dir on first run for sensible defaults.
@@ -112,9 +132,9 @@ class NWNManagerApp:
                 try:
                     shutil.copyfile(default_settings_src, self.settings_path)
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
         # Temporary working directory: keep it in system temp and remove on exit.
         try:
@@ -128,13 +148,13 @@ class NWNManagerApp:
                 if self.temp_dir and os.path.exists(self.temp_dir):
                     shutil.rmtree(self.temp_dir, ignore_errors=True)
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
 
         # Register cleanup on normal interpreter exit
         try:
             atexit.register(_cleanup_temp)
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
         self.sessions = SessionManager(self.sessions_path)
 
@@ -241,7 +261,7 @@ class NWNManagerApp:
         try:
             self.detect_existing_session()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         # Start slayer monitor if slayer is enabled and game is running
         try:
             if getattr(self.sessions, "sessions", None) and self.sessions.sessions:
@@ -318,7 +338,7 @@ class NWNManagerApp:
                 f.write(f"[{ts}] {context}: {exc}\n")
         except Exception:
             # Логгер не должен ломать приложение
-            pass
+            logging.exception("Failed to write to error log")
 
     # === СТИЛИ / ОКНО ===
 
@@ -433,7 +453,7 @@ class NWNManagerApp:
             except Exception:
                 _uib.set_theme(self.theme)
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
         try:
             if self.servers:
@@ -444,7 +464,7 @@ class NWNManagerApp:
                 else:
                     self.server_var.set(srv_names[0])
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
         lm_default_path = os.path.join(settings.doc_path, "logs", "nwclientLog1.txt")
         lm_cfg = settings.log_monitor
@@ -457,7 +477,7 @@ class NWNManagerApp:
             try:
                 self.save_data()
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
 
     def save_data(self):
         try:
@@ -498,7 +518,7 @@ class NWNManagerApp:
                 try:
                     self.root.after_cancel(self._save_after_id)
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
             self._save_after_id = self.root.after(delay_ms, lambda: (setattr(self, '_save_after_id', None), self.save_data()))
         except Exception as e:
             self.log_error("schedule_save", e)
@@ -699,14 +719,14 @@ class NWNManagerApp:
                             try:
                                 self.exe_path_var.set(exe_candidate)
                             except Exception:
-                                pass
+                                logging.exception("Unhandled exception")
 
             # If no server selected yet and servers present, select first
             if not self.server_var.get() and self.servers:
                 try:
                     self.server_var.set(self.servers[0]['name'])
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
 
             self.save_data()
             self.refresh_list()
@@ -719,13 +739,13 @@ class NWNManagerApp:
                     parent=self.root,
                 )
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         except Exception as e:
             self.log_error('import_xnwn_ini', e)
             try:
                 messagebox.showerror("Import Error", str(e), parent=self.root)
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
 
     def open_settings(self):
         """Delegate to SettingsManager."""
@@ -764,7 +784,7 @@ class NWNManagerApp:
                     try:
                         os.remove(old_file)
                     except Exception:
-                        pass
+                        logging.exception("Unhandled exception")
         except Exception as e:
             self.log_error("backup_files", e)
 
@@ -899,7 +919,7 @@ class NWNManagerApp:
                 if self.status_lbl.cget("text") != "Game Running":
                     self.status_lbl.config(text="Game Running", fg=COLORS.get("accent", "#ffaa00"))
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             return
 
         srv_val = self.cb_server.get().strip()
@@ -932,7 +952,7 @@ class NWNManagerApp:
                         if self.status_lbl.cget("text") != new_text:
                             self.status_lbl.config(text=new_text, fg=new_fg)
                     except Exception:
-                        pass
+                        logging.exception("Unhandled exception")
                 self.root.after(0, _update)
 
             except Exception as e:
@@ -992,7 +1012,7 @@ class NWNManagerApp:
         try:
             self._update_status_bar()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         # Update every 1 second
         self.root.after(1000, self._update_status_bar_loop)
     
@@ -1008,7 +1028,7 @@ class NWNManagerApp:
         try:
             self._update_slayer_ui_state()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
     
     def _update_nav_indicators(self):
         """Update navigation button indicators"""
@@ -1077,7 +1097,7 @@ class NWNManagerApp:
                 try:
                     self.home_content.pack_configure(padx=pad, pady=pad)
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
         except Exception as e:
             self.log_error("update_spacing", e)
 
@@ -1301,7 +1321,7 @@ class NWNManagerApp:
             if hasattr(self, 'slayer_counter_label'):
                 self.slayer_counter_label.config(text=f"Hits: {self.slayer_hit_count}")
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
     
     def _browse_log_path(self):
         path = filedialog.askopenfilename(title="Select Log File", filetypes=[("Log files", "*.txt *.log"), ("All files", "*.*")])
@@ -1554,11 +1574,11 @@ class NWNManagerApp:
             srv_names = [s.get("name", "") for s in self.servers if s.get("ip")]
             self.cb_server.configure(values=srv_names)
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         try:
             self.check_server_status()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
     def monitor_processes(self):
         self.sessions.cleanup_dead()
@@ -1576,27 +1596,27 @@ class NWNManagerApp:
                         try:
                             self.stop_log_monitor()
                         except Exception:
-                            pass
+                            logging.exception("Unhandled exception")
                     # Ensure config reflects disabled state
                     try:
                         self.log_monitor_config["enabled"] = False
                         self.save_data()
                     except Exception:
-                        pass
+                        logging.exception("Unhandled exception")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         # Очистка контролирующих профилей для ключей, которые больше не активны
         try:
             inactive = [k for k in self.controller_profile_by_cdkey.keys() if k not in self.sessions.sessions]
             for k in inactive:
                 self.controller_profile_by_cdkey.pop(k, None)
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         # Update launch buttons (update_launch_buttons itself skips redundant layout ops)
         try:
             self.update_launch_buttons()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         self.root.after(1000, self.monitor_processes)
 
     def is_current_running(self) -> bool:
@@ -1659,12 +1679,12 @@ class NWNManagerApp:
                             try:
                                 self.sessions.add(current_key, pid)
                             except Exception:
-                                pass
+                                logging.exception("Unhandled exception")
                             try:
                                 self.refresh_list()
                                 self.update_launch_buttons()
                             except Exception:
-                                pass
+                                logging.exception("Unhandled exception")
                             return
         except Exception as e:
             self.log_error("detect_existing_session.tasklist", e)
@@ -1682,15 +1702,15 @@ class NWNManagerApp:
                     try:
                         self.btn_play.pack_forget()
                     except Exception:
-                        pass
+                        logging.exception("Unhandled exception")
                     try:
                         self.ctrl_frame.pack_forget()
                     except Exception:
-                        pass
+                        logging.exception("Unhandled exception")
                     self._last_running_state = running  # зафиксировать состояние
                     return
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         # If nothing changed — don't touch layout (avoids flashing)
         if running == self._last_running_state:
             return
@@ -1700,38 +1720,38 @@ class NWNManagerApp:
         try:
             self.btn_play.pack(side="left", padx=(0,6))
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         try:
             self.ctrl_frame.pack(side="left")
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
         if running:
             try:
                 self.btn_play.configure(state="disabled")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             try:
                 self.btn_restart.configure(state="normal")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             try:
                 self.btn_close.configure(state="normal")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         else:
             try:
                 self.btn_play.configure(state="normal")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             try:
                 self.btn_restart.configure(state="disabled")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             try:
                 self.btn_close.configure(state="disabled")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         # Состояние редактирования/удаления обновляется в on_select.
 
     def refresh_list(self):
@@ -1806,16 +1826,16 @@ class NWNManagerApp:
             try:
                 messagebox.showinfo("Info", "Select a profile first.", parent=self.root)
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             return
         try:
             self.launch_game()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
         try:
             self.update_launch_buttons()
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
     def toggle_cdkey_visibility(self):
         """Toggle cdkey visibility and update info fields."""
@@ -1935,7 +1955,7 @@ class NWNManagerApp:
                 if key not in self.controller_profile_by_cdkey:
                     self.controller_profile_by_cdkey[key] = self.current_profile.get("playerName", "")
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
             self.refresh_list()
             self.update_launch_buttons()
             # можно включать лог-монитор вместе с игрой
@@ -1968,11 +1988,11 @@ class NWNManagerApp:
                 try:
                     self.sessions.cleanup_dead()
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
                 try:
                     self.root.after(0, self.update_launch_buttons)
                 except Exception:
-                    pass
+                    logging.exception("Unhandled exception")
 
             threading.Thread(target=_safe_exit_wrapper, daemon=True).start()
         # остановим монитор при закрытии
@@ -1996,19 +2016,22 @@ class NWNManagerApp:
             try:
                 self.root.after(0, self.launch_game)
             except Exception:
-                pass
+                logging.exception("Unhandled exception")
         threading.Thread(target=_wait_and_launch, daemon=True).start()
 
 if __name__ == "__main__":
+    app_dir = get_app_dir()
+    log_path = get_default_log_path(app_dir)
+    configure_logging(log_path)
     # For PyInstaller onefile builds: ensure our CWD is not the temporary
     # extraction directory (_MEIxxxx). Keeping CWD inside that folder can
     # sometimes prevent the bootloader from removing it and trigger the
     # "Failed to remove temporary directory" warning.
     try:
         if getattr(sys, "frozen", False):
-            os.chdir(os.path.dirname(sys.executable))
+            os.chdir(app_dir)
     except Exception:
-        pass
+        logging.exception("Failed to change working directory")
     root = tk.Tk()
     app = NWNManagerApp(root)
     root.mainloop()
