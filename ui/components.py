@@ -130,15 +130,15 @@ class StatusBar:
             self.labels["sessions"].config(text=sessions_text, fg=sessions_fg)
             
             # Log Monitor status
-            log_on = self.app.log_monitor and self.app.log_monitor.is_running()
+            log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
             log_text = "📊 Log: On" if log_on else "📊 Log: Off"
             log_fg = COLORS["success"] if log_on else COLORS["fg_dim"]
             self.labels["log_monitor"].config(text=log_text, fg=log_fg)
             
             # Slayer status
-            slayer_cfg = self.app.log_monitor_config.get("open_wounds", {})
+            slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
             slayer_enabled = slayer_cfg.get("enabled", False)
-            slayer_monitor_on = self.app.slayer_monitor and self.app.slayer_monitor.is_running()
+            slayer_monitor_on = self.app.log_monitor_state.slayer_monitor and self.app.log_monitor_state.slayer_monitor.is_running()
             slayer_active = slayer_enabled and (log_on or slayer_monitor_on)
             
             if slayer_active:
@@ -153,8 +153,8 @@ class StatusBar:
             self.labels["slayer"].config(text=slayer_text, fg=slayer_fg)
             
             # Slayer hits
-            hits_text = f"({self.app.slayer_hit_count} hits)"
-            hits_fg = COLORS["warning"] if self.app.slayer_hit_count > 0 else COLORS["fg_dim"]
+            hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
+            hits_fg = COLORS["warning"] if self.app.log_monitor_state.slayer_hit_count > 0 else COLORS["fg_dim"]
             self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
         except Exception:
             pass
@@ -226,7 +226,7 @@ class NavigationBar:
                 self.buttons["home"].config(text=home_text)
             
             # Log monitor active indicator
-            log_on = self.app.log_monitor and self.app.log_monitor.is_running()
+            log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
             log_text = "📊 Log Monitor 🟢" if log_on else "📊 Log Monitor"
             if "log_monitor" in self.buttons:
                 self.buttons["log_monitor"].config(text=log_text)

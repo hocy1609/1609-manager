@@ -13,12 +13,12 @@ def build_craft_screen(app):
     self.screens["craft"] = craft_frame
 
     # Initialize craft state
-    self.craft_running = False
-    self.craft_thread = None
-    self.craft_potions_count = 0
+    self.craft_state.running = False
+    self.craft_state.thread = None
+    self.craft_state.potions_count = 0
 
     # Craft variables (оптимизировано по реальным таймингам)
-    self.craft_vars = {
+    self.craft_state.vars = {
         "delay_action": tk.DoubleVar(value=2.5),   # После F10 (ждём открытие меню!)
         "delay_first": tk.DoubleVar(value=1.5),   # Доп. задержка для первого крафта после R
         "delay_seq": tk.DoubleVar(value=1.0),     # После нажатия sequence (крафт мгновенный)
@@ -32,12 +32,12 @@ def build_craft_screen(app):
     # Log monitoring for potion counting
     # Auto-detect NWN log path
     default_log = os.path.join(os.path.expanduser("~"), "Documents", "Neverwinter Nights", "logs", "nwclientLog1.txt")
-    self.craft_log_path = tk.StringVar(value=default_log if os.path.exists(default_log) else "")
-    self.craft_log_position = 0
-    self.craft_real_count = 0
+    self.craft_state.log_path = tk.StringVar(value=default_log if os.path.exists(default_log) else "")
+    self.craft_state.log_position = 0
+    self.craft_state.real_count = 0
 
     # Recorded macro for drag
-    self.recorded_macro = []
+    self.craft_state.recorded_macro = []
 
     # Main container with scroll
     main = tk.Frame(craft_frame, bg=COLORS["bg_root"])
@@ -66,11 +66,11 @@ def build_craft_screen(app):
     timing_inner = tk.Frame(timing_frame, bg=COLORS["bg_root"])
     timing_inner.pack(fill="x", padx=15, pady=10)
 
-    self._craft_row(timing_inner, 0, "Задержка после F10:", self.craft_vars["delay_action"])
-    self._craft_row(timing_inner, 1, "Задержка первого крафта:", self.craft_vars["delay_first"])
-    self._craft_row(timing_inner, 2, "Задержка после крафта:", self.craft_vars["delay_seq"])
-    self._craft_row(timing_inner, 3, "Задержка после R:", self.craft_vars["delay_r"])
-    self._craft_row(timing_inner, 4, "Повторов до R:", self.craft_vars["repeat_before_r"])
+    self._craft_row(timing_inner, 0, "Задержка после F10:", self.craft_state.vars["delay_action"])
+    self._craft_row(timing_inner, 1, "Задержка первого крафта:", self.craft_state.vars["delay_first"])
+    self._craft_row(timing_inner, 2, "Задержка после крафта:", self.craft_state.vars["delay_seq"])
+    self._craft_row(timing_inner, 3, "Задержка после R:", self.craft_state.vars["delay_r"])
+    self._craft_row(timing_inner, 4, "Повторов до R:", self.craft_state.vars["repeat_before_r"])
 
     # Potion recipes: (display_name, sequence)
     # Sequence: category + item + "1" for confirmation (Да)
@@ -130,7 +130,7 @@ def build_craft_screen(app):
     craft_inner.pack(fill="both", expand=True, padx=10, pady=10)
 
     # Selected potion display
-    self.craft_vars["selected_potion"] = tk.StringVar(value="")
+    self.craft_state.vars["selected_potion"] = tk.StringVar(value="")
     selected_frame = tk.Frame(craft_inner, bg=COLORS["bg_root"])
     selected_frame.pack(fill="x", pady=(0, 10))
     tk.Label(selected_frame, text="Выбрано:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
@@ -166,10 +166,10 @@ def build_craft_screen(app):
     settings_row.pack(fill="x", pady=(10, 0))
 
     tk.Label(settings_row, text="Menu Key:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
-    tk.Entry(settings_row, textvariable=self.craft_vars["action_key"], width=6, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 20))
+    tk.Entry(settings_row, textvariable=self.craft_state.vars["action_key"], width=6, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 20))
 
     tk.Label(settings_row, text="Лимит:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
-    tk.Entry(settings_row, textvariable=self.craft_vars["potion_limit"], width=6, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 0))
+    tk.Entry(settings_row, textvariable=self.craft_state.vars["potion_limit"], width=6, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 0))
 
     # Right column - Drag settings & Controls
     right_col = tk.Frame(columns, bg=COLORS["bg_root"])
@@ -230,8 +230,8 @@ def build_craft_screen(app):
     saved_row.pack(fill="x", pady=(10, 0))
 
     tk.Label(saved_row, text="Saved:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
-    self.craft_vars["selected_macro"] = tk.StringVar(value="")
-    self.macro_combo = ttk.Combobox(saved_row, textvariable=self.craft_vars["selected_macro"], width=20, state="readonly")
+    self.craft_state.vars["selected_macro"] = tk.StringVar(value="")
+    self.macro_combo = ttk.Combobox(saved_row, textvariable=self.craft_state.vars["selected_macro"], width=20, state="readonly")
     self.macro_combo.pack(side="left", padx=(5, 5))
     self.macro_combo.bind("<<ComboboxSelected>>", self.craft_load_selected_macro)
 
@@ -263,14 +263,14 @@ def build_craft_screen(app):
     speed_frame.pack(fill="x", pady=(10, 0))
 
     tk.Label(speed_frame, text="Speed:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
-    self.craft_vars["macro_speed"] = tk.DoubleVar(value=1.0)
+    self.craft_state.vars["macro_speed"] = tk.DoubleVar(value=1.0)
     self.speed_slider = tk.Scale(
         speed_frame,
         from_=0.1,
         to=5.0,
         resolution=0.1,
         orient="horizontal",
-        variable=self.craft_vars["macro_speed"],
+        variable=self.craft_state.vars["macro_speed"],
         bg=COLORS["bg_root"],
         fg=COLORS["fg_text"],
         troughcolor=COLORS["bg_input"],
@@ -283,12 +283,12 @@ def build_craft_screen(app):
 
     # Repeat count
     tk.Label(speed_frame, text="Repeat:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left", padx=(20, 0))
-    self.craft_vars["macro_repeats"] = tk.IntVar(value=1)
-    tk.Entry(speed_frame, textvariable=self.craft_vars["macro_repeats"], width=4, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 0))
+    self.craft_state.vars["macro_repeats"] = tk.IntVar(value=1)
+    tk.Entry(speed_frame, textvariable=self.craft_state.vars["macro_repeats"], width=4, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 0))
 
     # Initialize macro storage
-    self.recorded_macro = []
-    self.macro_playback_stop = False
+    self.craft_state.recorded_macro = []
+    self.craft_state.macro_playback_stop = False
 
     # Controls
     ctrl_frame = tk.LabelFrame(right_col, text=" Controls ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
