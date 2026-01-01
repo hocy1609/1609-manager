@@ -51,27 +51,28 @@ class LogMonitorManager:
     def ensure_log_monitor(self):
         """Create or update LogMonitor object based on current config."""
         # Check if slayer mode (Open Wounds) is enabled for high-priority polling
-        ow_cfg = self.app.log_monitor_config.get("open_wounds", {})
+        state = self.app.log_monitor_state
+        ow_cfg = state.config.get("open_wounds", {})
         slayer_mode = bool(ow_cfg.get("enabled", False))
         
-        if not self.app.log_monitor:
-            self.app.log_monitor = LogMonitor(
-                self.app.log_monitor_config["log_path"],
-                self.app.log_monitor_config["keywords"],
-                self.app.log_monitor_config["webhooks"],
+        if not state.monitor:
+            state.monitor = LogMonitor(
+                state.config["log_path"],
+                state.config["keywords"],
+                state.config["webhooks"],
                 on_error=lambda e: self.app.log_error("LogMonitor", e),
                 on_match=self.on_log_match,
                 on_line=self.on_log_line,
                 slayer_mode=slayer_mode,
             )
         else:
-            self.app.log_monitor.on_match = self.on_log_match
-            self.app.log_monitor.on_line = self.on_log_line
-            self.app.log_monitor.set_slayer_mode(slayer_mode)
-            self.app.log_monitor.update_config(
-                log_path=self.app.log_monitor_config["log_path"],
-                keywords=self.app.log_monitor_config["keywords"],
-                webhooks=self.app.log_monitor_config["webhooks"],
+            state.monitor.on_match = self.on_log_match
+            state.monitor.on_line = self.on_log_line
+            state.monitor.set_slayer_mode(slayer_mode)
+            state.monitor.update_config(
+                log_path=state.config["log_path"],
+                keywords=state.config["keywords"],
+                webhooks=state.config["webhooks"],
             )
 
     def start_log_monitor(self):
@@ -94,9 +95,9 @@ class LogMonitorManager:
             except Exception:
                 pass
             try:
-                if hasattr(self.app, "log_monitor_enabled_var"):
-                    self.app.log_monitor_enabled_var.set(False)
-                self.app.log_monitor_config["enabled"] = False
+                if self.app.log_monitor_state.enabled_var:
+                    self.app.log_monitor_state.enabled_var.set(False)
+                self.app.log_monitor_state.config["enabled"] = False
                 self.update_log_monitor_status_label()
             except Exception:
                 pass
@@ -106,26 +107,26 @@ class LogMonitorManager:
         self.ensure_log_monitor()
 
         # Start thread if not running
-        if self.app.log_monitor and not self.app.log_monitor.is_running():
+        if self.app.log_monitor_state.monitor and not self.app.log_monitor_state.monitor.is_running():
             print(">>> ЗАПУСК ПОТОКА СЛЕЖЕНИЯ <<<")
-            self.app.log_monitor.start()
+            self.app.log_monitor_state.monitor.start()
         # Stop slayer monitor if log monitor is running (log monitor handles both)
         self._stop_slayer_monitor()
         # Update UI indicator and sync checkbox
         try:
-            if hasattr(self.app, "log_monitor_enabled_var"):
-                self.app.log_monitor_enabled_var.set(True)
+            if self.app.log_monitor_state.enabled_var:
+                self.app.log_monitor_state.enabled_var.set(True)
             self.update_log_monitor_status_label()
         except Exception:
             pass
 
     def stop_log_monitor(self):
         """Stop the log monitor."""
-        if self.app.log_monitor and self.app.log_monitor.is_running():
-            self.app.log_monitor.stop()
+        if self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running():
+            self.app.log_monitor_state.monitor.stop()
         try:
-            if hasattr(self.app, "log_monitor_enabled_var"):
-                self.app.log_monitor_enabled_var.set(False)
+            if self.app.log_monitor_state.enabled_var:
+                self.app.log_monitor_state.enabled_var.set(False)
             self.update_log_monitor_status_label()
         except Exception:
             pass
@@ -135,9 +136,9 @@ class LogMonitorManager:
     def _ensure_slayer_if_enabled(self):
         """Start slayer-only monitor if slayer is enabled and log monitor is not running."""
         try:
-            ow_cfg = self.app.log_monitor_config.get("open_wounds", {})
+            ow_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
             slayer_enabled = ow_cfg.get("enabled", False)
-            log_monitor_running = self.app.log_monitor and self.app.log_monitor.is_running()
+            log_monitor_running = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
             
             if slayer_enabled and not log_monitor_running:
                 # Start slayer-only monitor
@@ -157,15 +158,15 @@ class LogMonitorManager:
                 return
             
             # Don't start if log monitor is already running (it handles slayer too)
-            if self.app.log_monitor and self.app.log_monitor.is_running():
+            if self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running():
                 return
             
-            log_path = self.app.log_monitor_config.get("log_path", "")
+            log_path = self.app.log_monitor_state.config.get("log_path", "")
             if not log_path:
                 return
             
-            if not self.app.slayer_monitor:
-                self.app.slayer_monitor = LogMonitor(
+            if not self.app.log_monitor_state.slayer_monitor:
+                self.app.log_monitor_state.slayer_monitor = LogMonitor(
                     log_path,
                     keywords=[],  # No keywords - slayer only
                     webhooks=[],  # No webhooks - slayer only
@@ -175,29 +176,29 @@ class LogMonitorManager:
                     slayer_mode=True,  # High priority polling
                 )
             else:
-                self.app.slayer_monitor.update_config(log_path=log_path, keywords=[], webhooks=[])
-                self.app.slayer_monitor.on_line = self.on_log_line
-                self.app.slayer_monitor.set_slayer_mode(True)
+                self.app.log_monitor_state.slayer_monitor.update_config(log_path=log_path, keywords=[], webhooks=[])
+                self.app.log_monitor_state.slayer_monitor.on_line = self.on_log_line
+                self.app.log_monitor_state.slayer_monitor.set_slayer_mode(True)
             
-            if not self.app.slayer_monitor.is_running():
+            if not self.app.log_monitor_state.slayer_monitor.is_running():
                 print(">>> ЗАПУСК SLAYER MONITOR <<<")
-                self.app.slayer_monitor.start()
+                self.app.log_monitor_state.slayer_monitor.start()
         except Exception as e:
             self.app.log_error("_start_slayer_monitor", e)
 
     def _stop_slayer_monitor(self):
         """Stop the slayer-only monitor."""
         try:
-            if self.app.slayer_monitor and self.app.slayer_monitor.is_running():
+            if self.app.log_monitor_state.slayer_monitor and self.app.log_monitor_state.slayer_monitor.is_running():
                 print(">>> ОСТАНОВКА SLAYER MONITOR <<<")
-                self.app.slayer_monitor.stop()
+                self.app.log_monitor_state.slayer_monitor.stop()
         except Exception as e:
             self.app.log_error("_stop_slayer_monitor", e)
 
     def update_log_monitor_status_label(self):
         """Update the log monitor status indicator in UI."""
         try:
-            running = self.app.log_monitor.is_running() if self.app.log_monitor else False
+            running = self.app.log_monitor_state.monitor.is_running() if self.app.log_monitor_state.monitor else False
             if running:
                 text = "● Running"
                 fg = COLORS.get("success", "#00a000")
@@ -217,12 +218,12 @@ class LogMonitorManager:
                 return
             ll = line.lower()
             if "open wounds hit" in ll:
-                cfg = self.app.log_monitor_config.get("open_wounds", {})
+                cfg = self.app.log_monitor_state.config.get("open_wounds", {})
                 if cfg and cfg.get("enabled"):
                     key = cfg.get("key", "F1")
                     self._send_function_key_to_active_session(key)
                     # Increment slayer hit counter
-                    self.app.slayer_hit_count += 1
+                    self.app.log_monitor_state.slayer_hit_count += 1
                     self._update_slayer_hit_counter_ui()
         except Exception as e:
             self.app.log_error("open_wounds_detection", e)
@@ -232,11 +233,11 @@ class LogMonitorManager:
         try:
             # Update status bar
             if hasattr(self.app, 'status_bar_labels') and "slayer_hits" in self.app.status_bar_labels:
-                hits_text = f"({self.app.slayer_hit_count} hits)"
+                hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
                 self.app.status_bar_labels["slayer_hits"].config(text=hits_text, fg=COLORS["warning"])
             # Update log monitor screen counter if exists
             if hasattr(self.app, 'slayer_counter_label'):
-                self.app.slayer_counter_label.config(text=f"Hits: {self.app.slayer_hit_count}")
+                self.app.slayer_counter_label.config(text=f"Hits: {self.app.log_monitor_state.slayer_hit_count}")
         except Exception:
             pass
 
@@ -346,7 +347,10 @@ class LogMonitorManager:
         from tkinter import messagebox
         
         try:
-            enabled = bool(self.app.log_monitor_enabled_var.get())
+            enabled_var = self.app.log_monitor_state.enabled_var
+            if not enabled_var:
+                return
+            enabled = bool(enabled_var.get())
             # If user tries to enable but no game is running — prevent it
             if enabled:
                 has_sessions = bool(getattr(self.app.sessions, "sessions", None))
@@ -361,14 +365,14 @@ class LogMonitorManager:
                         pass
                     # Revert checkbox and do not save
                     try:
-                        self.app.log_monitor_enabled_var.set(False)
+                        enabled_var.set(False)
                     except Exception:
                         pass
                     return
 
             # Persist desired state
-            self.app.log_monitor_config["enabled"] = enabled
-            self.app.log_monitor_config["enabled"] = enabled
+            self.app.log_monitor_state.config["enabled"] = enabled
+            self.app.log_monitor_state.config["enabled"] = enabled
             if hasattr(self.app, 'schedule_save'):
                 self.app.schedule_save()
             else:
@@ -409,7 +413,7 @@ class LogMonitorManager:
                     cfg["enabled"] = False
 
             # Save settings
-            self.app.log_monitor_config.update(cfg)
+            self.app.log_monitor_state.config.update(cfg)
             self.app.save_data()
 
             # Update monitor
@@ -417,18 +421,18 @@ class LogMonitorManager:
 
             # Start/stop based on enabled state
             try:
-                if self.app.log_monitor_config.get("enabled"):
+                if self.app.log_monitor_state.config.get("enabled"):
                     self.start_log_monitor()
                 else:
                     self.stop_log_monitor()
             except Exception as e:
                 self.app.log_error("open_log_monitor_dialog.on_save_config", e)
 
-        running = self.app.log_monitor.is_running() if self.app.log_monitor else False
+        running = self.app.log_monitor_state.monitor.is_running() if self.app.log_monitor_state.monitor else False
 
         LogMonitorDialog(
             self.app.root,
-            self.app.log_monitor_config,
+            self.app.log_monitor_state.config,
             on_save_config,
             self.start_log_monitor,
             self.stop_log_monitor,

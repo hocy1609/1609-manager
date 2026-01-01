@@ -12,6 +12,7 @@ import atexit
 import ctypes
 import ctypes.wintypes
 from datetime import datetime
+from dataclasses import dataclass, field
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -63,6 +64,33 @@ from core.settings_manager import SettingsManager
 
 
 set_dpi_awareness()
+
+
+@dataclass
+class CraftState:
+    running: bool = False
+    vars: dict[str, tk.Variable] = field(default_factory=dict)
+    recorded_macro: list = field(default_factory=list)
+    log_path: tk.StringVar | None = None
+    log_position: int = 0
+    real_count: int = 0
+    macro_playback_stop: bool = False
+    potions_count: int = 0
+    thread: threading.Thread | None = None
+
+
+@dataclass
+class LogMonitorState:
+    config: dict = field(default_factory=dict)
+    monitor: LogMonitor | None = None
+    slayer_monitor: LogMonitor | None = None
+    slayer_hit_count: int = 0
+    enabled_var: tk.BooleanVar | None = None
+    log_path_var: tk.StringVar | None = None
+    webhooks_text: tk.Text | None = None
+    keywords_text: tk.Text | None = None
+    open_wounds_enabled_var: tk.BooleanVar | None = None
+    open_wounds_key_var: tk.StringVar | None = None
 
 
 class NWNManagerApp:
@@ -153,26 +181,30 @@ class NWNManagerApp:
         self.favorite_potions = set()
         
         # Craft vars
-        self.craft_running = False
-        self.recorded_macro = []
-        self.craft_vars = {
-            "selected_potion": tk.StringVar(),
-            "sequence": tk.StringVar(),
-            "action_key": tk.StringVar(value="Num0"),
-            "delay_action": tk.DoubleVar(value=0.2),
-            "delay_first": tk.DoubleVar(value=1.5),
-            "delay_seq": tk.DoubleVar(value=4.0),
-            "delay_r": tk.DoubleVar(value=1.5),
-            "repeat_before_r": tk.IntVar(value=5),
-            "potion_limit": tk.IntVar(value=0),
-            "selected_macro": tk.StringVar(),
-            "macro_speed": tk.DoubleVar(value=1.0),
-            "macro_repeats": tk.IntVar(value=1),
-        }
-        self.craft_log_path = tk.StringVar()
-        self.craft_log_position = 0
-        self.craft_real_count = 0
-        self.macro_playback_stop = False
+        self.craft_state = CraftState(
+            running=False,
+            recorded_macro=[],
+            vars={
+                "selected_potion": tk.StringVar(),
+                "sequence": tk.StringVar(),
+                "action_key": tk.StringVar(value="Num0"),
+                "delay_action": tk.DoubleVar(value=0.2),
+                "delay_first": tk.DoubleVar(value=1.5),
+                "delay_seq": tk.DoubleVar(value=4.0),
+                "delay_r": tk.DoubleVar(value=1.5),
+                "repeat_before_r": tk.IntVar(value=5),
+                "potion_limit": tk.IntVar(value=0),
+                "selected_macro": tk.StringVar(),
+                "macro_speed": tk.DoubleVar(value=1.0),
+                "macro_repeats": tk.IntVar(value=1),
+            },
+            log_path=tk.StringVar(),
+            log_position=0,
+            real_count=0,
+            macro_playback_stop=False,
+            potions_count=0,
+            thread=None,
+        )
 
         self.current_profile: dict | None = None
         
@@ -186,17 +218,17 @@ class NWNManagerApp:
         self.drag_data = {"index": None}
         self._drag_data = {"x": 0, "y": 0}
 
-        self.log_monitor_config = {
-            "enabled": False,
-            "log_path": "",
-            "webhooks": [],
-            "keywords": [],
-        }
-        self.log_monitor: LogMonitor | None = None
-        # Separate slayer monitor (runs independently when slayer is enabled)
-        self.slayer_monitor: LogMonitor | None = None
-        # Slayer hit counter
-        self.slayer_hit_count = 0
+        self.log_monitor_state = LogMonitorState(
+            config={
+                "enabled": False,
+                "log_path": "",
+                "webhooks": [],
+                "keywords": [],
+            },
+            monitor=None,
+            slayer_monitor=None,
+            slayer_hit_count=0,
+        )
         
         # UI components
         self.title_bar_comp = None
@@ -450,8 +482,8 @@ class NWNManagerApp:
         lm_cfg = settings.log_monitor
         if lm_cfg.log_path == "":
             lm_cfg.log_path = lm_default_path
-        self.log_monitor_config = lm_cfg.to_dict()
-        self.log_monitor_config.setdefault("open_wounds", {"enabled": False, "key": "F1"})
+        self.log_monitor_state.config = lm_cfg.to_dict()
+        self.log_monitor_state.config.setdefault("open_wounds", {"enabled": False, "key": "F1"})
 
         if not os.path.exists(self.settings_path):
             try:
@@ -463,7 +495,7 @@ class NWNManagerApp:
         try:
             servers = [Server.from_dict(s) if isinstance(s, dict) else s for s in self.servers]
             profiles = [Profile.from_dict(p) if isinstance(p, dict) else p for p in self.profiles]
-            lm_cfg = LogMonitorConfig.from_dict(self.log_monitor_config or {})
+            lm_cfg = LogMonitorConfig.from_dict(self.log_monitor_state.config or {})
             settings = Settings(
                 doc_path=self.doc_path_var.get(),
                 exe_path=self.exe_path_var.get(),
@@ -858,7 +890,10 @@ class NWNManagerApp:
     def _test_open_wounds_key(self):
         """Test Open Wounds key."""
         try:
-            key = str(self.open_wounds_key_var.get() or "F1")
+            key_var = self.log_monitor_state.open_wounds_key_var
+            if not key_var:
+                return
+            key = str(key_var.get() or "F1")
             self._send_function_key_to_active_session(key)
             messagebox.showinfo("Test", f"Sent {key} to active session (if any).", parent=self.root)
         except Exception as e:
@@ -1241,11 +1276,17 @@ class NWNManagerApp:
     
     def _on_log_monitor_toggle(self):
         """Handle toggle switch change - auto apply"""
-        enabled = self.log_monitor_enabled_var.get()
-        self.log_monitor_config["enabled"] = enabled
-        self.log_monitor_config["log_path"] = self.log_path_var.get()
-        self.log_monitor_config["webhooks"] = [w.strip() for w in self.webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
-        self.log_monitor_config["keywords"] = [k.strip() for k in self.keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
+        enabled_var = self.log_monitor_state.enabled_var
+        log_path_var = self.log_monitor_state.log_path_var
+        webhooks_text = self.log_monitor_state.webhooks_text
+        keywords_text = self.log_monitor_state.keywords_text
+        if not (enabled_var and log_path_var and webhooks_text and keywords_text):
+            return
+        enabled = enabled_var.get()
+        self.log_monitor_state.config["enabled"] = enabled
+        self.log_monitor_state.config["log_path"] = log_path_var.get()
+        self.log_monitor_state.config["webhooks"] = [w.strip() for w in webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
+        self.log_monitor_state.config["keywords"] = [k.strip() for k in keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
         
         # Slayer now works independently - don't disable it when log monitor is disabled
         
@@ -1262,10 +1303,10 @@ class NWNManagerApp:
     def _update_slayer_ui_state(self):
         """Update slayer (Open Wounds) UI elements based on slayer state."""
         try:
-            slayer_cfg = self.log_monitor_config.get("open_wounds", {})
+            slayer_cfg = self.log_monitor_state.config.get("open_wounds", {})
             slayer_on = slayer_cfg.get("enabled", False)
-            log_monitor_on = self.log_monitor and self.log_monitor.is_running()
-            slayer_monitor_on = self.slayer_monitor and self.slayer_monitor.is_running()
+            log_monitor_on = self.log_monitor_state.monitor and self.log_monitor_state.monitor.is_running()
+            slayer_monitor_on = self.log_monitor_state.slayer_monitor and self.log_monitor_state.slayer_monitor.is_running()
             slayer_active = slayer_on and (log_monitor_on or slayer_monitor_on)
             
             # Update visual appearance
@@ -1299,34 +1340,41 @@ class NWNManagerApp:
             
             # Update hit counter label
             if hasattr(self, 'slayer_counter_label'):
-                self.slayer_counter_label.config(text=f"Hits: {self.slayer_hit_count}")
+                self.slayer_counter_label.config(text=f"Hits: {self.log_monitor_state.slayer_hit_count}")
         except Exception:
             pass
     
     def _browse_log_path(self):
         path = filedialog.askopenfilename(title="Select Log File", filetypes=[("Log files", "*.txt *.log"), ("All files", "*.*")])
         if path:
-            self.log_path_var.set(path)
+            if self.log_monitor_state.log_path_var:
+                self.log_monitor_state.log_path_var.set(path)
     
     def _save_log_monitor_settings(self):
         """Save log monitor settings"""
         try:
-            self.log_monitor_config["enabled"] = self.log_monitor_enabled_var.get()
-            self.log_monitor_config["log_path"] = self.log_path_var.get()
-            self.log_monitor_config["webhooks"] = [w.strip() for w in self.webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
-            self.log_monitor_config["keywords"] = [k.strip() for k in self.keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
+            enabled_var = self.log_monitor_state.enabled_var
+            log_path_var = self.log_monitor_state.log_path_var
+            webhooks_text = self.log_monitor_state.webhooks_text
+            keywords_text = self.log_monitor_state.keywords_text
+            if not (enabled_var and log_path_var and webhooks_text and keywords_text):
+                return
+            self.log_monitor_state.config["enabled"] = enabled_var.get()
+            self.log_monitor_state.config["log_path"] = log_path_var.get()
+            self.log_monitor_state.config["webhooks"] = [w.strip() for w in webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
+            self.log_monitor_state.config["keywords"] = [k.strip() for k in keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
             # persist Open Wounds settings
             try:
-                self.log_monitor_config["open_wounds"] = {
-                    "enabled": bool(self.open_wounds_enabled_var.get()),
-                    "key": str(self.open_wounds_key_var.get() or "F1"),
+                self.log_monitor_state.config["open_wounds"] = {
+                    "enabled": bool(self.log_monitor_state.open_wounds_enabled_var.get()),
+                    "key": str(self.log_monitor_state.open_wounds_key_var.get() or "F1"),
                 }
             except Exception:
-                self.log_monitor_config["open_wounds"] = {"enabled": False, "key": "F1"}
+                self.log_monitor_state.config["open_wounds"] = {"enabled": False, "key": "F1"}
             self.save_data()
             
             # Restart monitor if enabled
-            if self.log_monitor_config["enabled"]:
+            if self.log_monitor_state.config["enabled"]:
                 self.start_log_monitor()
                 self.log_monitor_status.config(text="Status: Running", fg=COLORS["success"])
             else:
@@ -1572,14 +1620,14 @@ class NWNManagerApp:
                 has_sessions = bool(getattr(self.sessions, "sessions", None))
                 if not has_sessions:
                     # If monitor object exists and is running, stop it
-                    if self.log_monitor and self.log_monitor.is_running():
+                    if self.log_monitor_state.monitor and self.log_monitor_state.monitor.is_running():
                         try:
                             self.stop_log_monitor()
                         except Exception:
                             pass
                     # Ensure config reflects disabled state
                     try:
-                        self.log_monitor_config["enabled"] = False
+                        self.log_monitor_state.config["enabled"] = False
                         self.save_data()
                     except Exception:
                         pass

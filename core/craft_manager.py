@@ -111,37 +111,37 @@ class CraftManager:
     
     def _select_potion(self, potion_name):
         """Select a potion for crafting."""
-        self.app.craft_vars["selected_potion"].set(potion_name)
+        self.app.craft_state.vars["selected_potion"].set(potion_name)
         self.app.selected_potion_lbl.config(text=potion_name)
         if potion_name in self.app.potion_sequences:
-            self.app.craft_vars["sequence"].set(self.app.potion_sequences[potion_name])
+            self.app.craft_state.vars["sequence"].set(self.app.potion_sequences[potion_name])
     
     def _on_potion_selected(self, event=None):
         """When potion is selected from dropdown, set the sequence."""
-        selected = self.app.craft_vars["selected_potion"].get()
+        selected = self.app.craft_state.vars["selected_potion"].get()
         if selected in self.app.potion_sequences:
             seq = self.app.potion_sequences[selected]
-            self.app.craft_vars["sequence"].set(seq)
+            self.app.craft_state.vars["sequence"].set(seq)
     
     def craft_start(self):
         """Start crafting process."""
-        if self.app.craft_running:
+        if self.app.craft_state.running:
             return
         
-        self.app.craft_running = True
-        self.app.craft_potions_count = 0
+        self.app.craft_state.running = True
+        self.app.craft_state.potions_count = 0
         self.app.craft_btn_start.configure(state="disabled")
         self.app.craft_btn_stop.configure(state="normal")
         self.app.craft_status_lbl.config(text="Status: Running... (0 potions)", fg=COLORS["success"])
         
-        self.app.craft_thread = threading.Thread(target=self._craft_loop, daemon=True)
-        self.app.craft_thread.start()
+        self.app.craft_state.thread = threading.Thread(target=self._craft_loop, daemon=True)
+        self.app.craft_state.thread.start()
     
     def craft_stop(self):
         """Stop crafting process."""
-        self.app.craft_running = False
+        self.app.craft_state.running = False
         self.app.craft_status_lbl.config(
-            text=f"Status: Stopped ({self.app.craft_potions_count} potions)", 
+            text=f"Status: Stopped ({self.app.craft_state.potions_count} potions)", 
             fg=COLORS["warning"]
         )
     
@@ -149,21 +149,21 @@ class CraftManager:
         """Main craft loop - runs in thread."""
         from utils.win_automation import press_key_by_name
         try:
-            delay_action = self.app.craft_vars["delay_action"].get()
-            delay_first = self.app.craft_vars["delay_first"].get()
-            delay_seq = self.app.craft_vars["delay_seq"].get()
-            delay_r = self.app.craft_vars["delay_r"].get()
-            repeat_before_r = self.app.craft_vars["repeat_before_r"].get()
-            seq_str = self.app.craft_vars["sequence"].get()
-            action_key = self.app.craft_vars["action_key"].get()
-            potion_limit = self.app.craft_vars["potion_limit"].get()
+            delay_action = self.app.craft_state.vars["delay_action"].get()
+            delay_first = self.app.craft_state.vars["delay_first"].get()
+            delay_seq = self.app.craft_state.vars["delay_seq"].get()
+            delay_r = self.app.craft_state.vars["delay_r"].get()
+            repeat_before_r = self.app.craft_state.vars["repeat_before_r"].get()
+            seq_str = self.app.craft_state.vars["sequence"].get()
+            action_key = self.app.craft_state.vars["action_key"].get()
+            potion_limit = self.app.craft_state.vars["potion_limit"].get()
             
             print(f"[Craft] Settings: action_key={action_key}, sequence={seq_str}, repeats={repeat_before_r}, limit={potion_limit}")
             print(f"[Craft] Delays: action={delay_action}, first={delay_first}, seq={delay_seq}, r={delay_r}")
             
             # Countdown with hint to switch to NWN
             for i in range(3, 0, -1):
-                if not self.app.craft_running:
+                if not self.app.craft_state.running:
                     return
                 self.app.root.after(0, lambda n=i: self.app.craft_status_lbl.config(
                     text=f"Переключись на NWN! {n}...", fg=COLORS["warning"]))
@@ -173,14 +173,14 @@ class CraftManager:
                 text="Крафтим...", fg=COLORS["success"]))
 
             # Initialize log monitoring
-            log_path = self.app.craft_log_path.get()
+            log_path = self.app.craft_state.log_path.get()
             if log_path and os.path.exists(log_path):
                 try:
                     with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
                         f.seek(0, 2)  # To end of file
-                        self.app.craft_log_position = f.tell()
-                    self.app.craft_real_count = 0
-                    print(f"[Craft] Log monitoring enabled: {log_path}, position: {self.app.craft_log_position}")
+                        self.app.craft_state.log_position = f.tell()
+                    self.app.craft_state.real_count = 0
+                    print(f"[Craft] Log monitoring enabled: {log_path}, position: {self.app.craft_state.log_position}")
                 except Exception as e:
                     print(f"[Craft] Log monitoring failed: {e}")
                     log_path = None
@@ -188,13 +188,13 @@ class CraftManager:
                 log_path = None
                 print(f"[Craft] Log monitoring disabled")
 
-            while self.app.craft_running:
+            while self.app.craft_state.running:
                 # Craft repeat_before_r potions
                 for craft_idx in range(repeat_before_r):
-                    if not self.app.craft_running:
+                    if not self.app.craft_state.running:
                         break
-                    if potion_limit > 0 and self.app.craft_potions_count >= potion_limit:
-                        self.app.craft_running = False
+                    if potion_limit > 0 and self.app.craft_state.potions_count >= potion_limit:
+                        self.app.craft_state.running = False
                         break
                     
                     is_first = (craft_idx == 0)  # First craft after R
@@ -211,31 +211,31 @@ class CraftManager:
                     # Press sequence to select potion
                     print(f"[Craft] Pressing sequence: {seq_str}")
                     for char in seq_str:
-                        if not self.app.craft_running:
+                        if not self.app.craft_state.running:
                             break
                         print(f"[Craft] Pressing key: {char}")
                         press_key_by_name(char)
                         time.sleep(0.5)
                     
-                    if not self.app.craft_running:
+                    if not self.app.craft_state.running:
                         break
                     
                     # Wait for craft completion
                     if not self._craft_sleep(delay_seq):
                         break
                     
-                    self.app.craft_potions_count += 1
+                    self.app.craft_state.potions_count += 1
                     
                     # Check log for real potion count
-                    real_count = self._check_craft_log(log_path) if log_path else self.app.craft_potions_count
+                    real_count = self._check_craft_log(log_path) if log_path else self.app.craft_state.potions_count
                     
-                    print(f"[Craft] Potion #{self.app.craft_potions_count} crafted ({craft_idx + 1}/{repeat_before_r}), real from log: {real_count}")
-                    self.app.root.after(0, lambda c=self.app.craft_potions_count, r=real_count: self.app.craft_status_lbl.config(
+                    print(f"[Craft] Potion #{self.app.craft_state.potions_count} crafted ({craft_idx + 1}/{repeat_before_r}), real from log: {real_count}")
+                    self.app.root.after(0, lambda c=self.app.craft_state.potions_count, r=real_count: self.app.craft_status_lbl.config(
                         text=f"Крафтим... ({c} нажатий, {r} зелий)"))
                 
-                if not self.app.craft_running:
+                if not self.app.craft_state.running:
                     break
-                if potion_limit > 0 and self.app.craft_potions_count >= potion_limit:
+                if potion_limit > 0 and self.app.craft_state.potions_count >= potion_limit:
                     break
                 
                 # Rest (R)
@@ -247,28 +247,28 @@ class CraftManager:
         except Exception as e:
             self.app.log_error("craft_loop", e)
         finally:
-            self.app.craft_running = False
+            self.app.craft_state.running = False
             self.app.root.after(0, self._craft_reset_ui)
     
     def _craft_sleep(self, seconds):
         """Sleep with interrupt check."""
         steps = int(seconds / 0.1)
         for _ in range(steps):
-            if not self.app.craft_running:
+            if not self.app.craft_state.running:
                 return False
             time.sleep(0.1)
         rem = seconds - (steps * 0.1)
         if rem > 0:
             time.sleep(rem)
-        return self.app.craft_running
+        return self.app.craft_state.running
     
     def _craft_reset_ui(self):
         """Reset craft UI after stop."""
         self.app.craft_btn_start.configure(state="normal")
         self.app.craft_btn_stop.configure(state="disabled")
-        real_count = self.app.craft_real_count if hasattr(self.app, 'craft_real_count') else self.app.craft_potions_count
+        real_count = self.app.craft_state.real_count
         self.app.craft_status_lbl.config(
-            text=f"Остановлено ({self.app.craft_potions_count} нажатий, {real_count} зелий)", 
+            text=f"Остановлено ({self.app.craft_state.potions_count} нажатий, {real_count} зелий)", 
             fg=COLORS["danger"]
         )
     
@@ -277,27 +277,27 @@ class CraftManager:
         import re
         
         if not log_path or not os.path.exists(log_path):
-            return self.app.craft_real_count
+            return self.app.craft_state.real_count
         
         try:
             with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
-                f.seek(self.app.craft_log_position)
+                f.seek(self.app.craft_state.log_position)
                 new_content = f.read()
-                self.app.craft_log_position = f.tell()
+                self.app.craft_state.log_position = f.tell()
                 
                 # Count "Acquired Item:" entries with "Зелье" (potion)
                 matches = re.findall(r'Acquired Item:.*(?:Зелье|зелье|Potion)', new_content, re.IGNORECASE)
                 if not matches:
                     matches = re.findall(r'Acquired Item:', new_content)
                 
-                self.app.craft_real_count += len(matches)
+                self.app.craft_state.real_count += len(matches)
                 
                 if matches:
-                    print(f"[Craft] Found {len(matches)} items in log, total: {self.app.craft_real_count}")
+                    print(f"[Craft] Found {len(matches)} items in log, total: {self.app.craft_state.real_count}")
         except Exception as e:
             print(f"[Craft] Log read error: {e}")
         
-        return self.app.craft_real_count
+        return self.app.craft_state.real_count
     
     def _browse_craft_log(self):
         """Browse for NWN log file."""
@@ -311,7 +311,7 @@ class CraftManager:
             filetypes=[("Log files", "*.txt"), ("All files", "*.*")]
         )
         if filepath:
-            self.app.craft_log_path.set(filepath)
+            self.app.craft_state.log_path.set(filepath)
     
     def _open_craft_settings(self):
         """Open craft settings dialog."""
@@ -340,7 +340,7 @@ class CraftManager:
         log_row.pack(fill="x", pady=(5, 15))
         
         log_entry = tk.Entry(
-            log_row, textvariable=self.app.craft_log_path, 
+            log_row, textvariable=self.app.craft_state.log_path, 
             bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat"
         )
         log_entry.pack(side="left", fill="x", expand=True, ipady=3)
@@ -391,7 +391,7 @@ class CraftManager:
             recorder = get_macro_recorder()
             
             def on_recording_done(events):
-                self.app.recorded_macro = events
+                self.app.craft_state.recorded_macro = events
                 event_count = len(events)
                 if event_count > 0:
                     # Calculate duration
@@ -412,14 +412,14 @@ class CraftManager:
     
     def craft_clear_macro(self):
         """Clear recorded macro."""
-        self.app.recorded_macro = []
+        self.app.craft_state.recorded_macro = []
         self.app.macro_status_lbl.config(text="No macro recorded", fg=COLORS["fg_dim"])
     
     def craft_save_macro(self):
         """Save current macro to file (with speed setting)."""
         from ui.dialogs import CustomInputDialog
         
-        if not self.app.recorded_macro:
+        if not self.app.craft_state.recorded_macro:
             messagebox.showwarning("No Macro", "Record a macro first!")
             return
         
@@ -443,20 +443,20 @@ class CraftManager:
         try:
             # Save macro with speed setting
             macro_data = {
-                "events": self.app.recorded_macro,
-                "speed": self.app.craft_vars["macro_speed"].get()
+                "events": self.app.craft_state.recorded_macro,
+                "speed": self.app.craft_state.vars["macro_speed"].get()
             }
             with open(macro_path, "w", encoding="utf-8") as f:
                 json.dump(macro_data, f)
             self._refresh_macro_list()
-            self.app.craft_vars["selected_macro"].set(name)
+            self.app.craft_state.vars["selected_macro"].set(name)
             messagebox.showinfo("Saved", f"Macro '{name}' saved!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save: {e}")
     
     def craft_load_selected_macro(self, event=None):
         """Load selected macro from dropdown (with speed setting)."""
-        name = self.app.craft_vars["selected_macro"].get()
+        name = self.app.craft_state.vars["selected_macro"].get()
         if not name:
             return
         
@@ -469,22 +469,22 @@ class CraftManager:
             
             # Support both old format (list) and new format (dict with events + speed)
             if isinstance(data, list):
-                self.app.recorded_macro = data
+                self.app.craft_state.recorded_macro = data
             else:
-                self.app.recorded_macro = data.get("events", [])
+                self.app.craft_state.recorded_macro = data.get("events", [])
                 # Restore speed setting
                 if "speed" in data:
-                    self.app.craft_vars["macro_speed"].set(data["speed"])
+                    self.app.craft_state.vars["macro_speed"].set(data["speed"])
             
-            event_count = len(self.app.recorded_macro)
-            duration = self.app.recorded_macro[-1][0] if self.app.recorded_macro else 0
+            event_count = len(self.app.craft_state.recorded_macro)
+            duration = self.app.craft_state.recorded_macro[-1][0] if self.app.craft_state.recorded_macro else 0
             self.app.macro_status_lbl.config(text=f"Loaded: {event_count} events, {duration:.1f}s", fg=COLORS["success"])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load: {e}")
     
     def craft_delete_macro(self):
         """Delete selected macro."""
-        name = self.app.craft_vars["selected_macro"].get()
+        name = self.app.craft_state.vars["selected_macro"].get()
         if not name:
             return
         
@@ -497,7 +497,7 @@ class CraftManager:
         try:
             os.remove(macro_path)
             self._refresh_macro_list()
-            self.app.craft_vars["selected_macro"].set("")
+            self.app.craft_state.vars["selected_macro"].set("")
             self.app.macro_status_lbl.config(text="Macro deleted", fg=COLORS["fg_dim"])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete: {e}")
@@ -520,15 +520,15 @@ class CraftManager:
         """Play recorded drag macro with Alt+Tab stop."""
         from utils.win_automation import user32, MOUSEEVENTF_LEFTUP
         
-        if not self.app.recorded_macro:
+        if not self.app.craft_state.recorded_macro:
             messagebox.showwarning("No Macro", "Please record or load a macro first!\n\nClick RECORD, switch to NWN,\nperform drag action, Alt+Tab to stop.")
             return
         
-        repeats = self.app.craft_vars["macro_repeats"].get()
-        speed = self.app.craft_vars["macro_speed"].get()
+        repeats = self.app.craft_state.vars["macro_repeats"].get()
+        speed = self.app.craft_state.vars["macro_speed"].get()
         
         self.app.craft_btn_drag.configure(state="disabled")
-        self.app.macro_playback_stop = False
+        self.app.craft_state.macro_playback_stop = False
         
         def play_thread():
             try:
@@ -546,13 +546,13 @@ class CraftManager:
                 
                 played = 0
                 for i in range(repeats):
-                    if self.app.macro_playback_stop:
+                    if self.app.craft_state.macro_playback_stop:
                         break
                     
                     # Check for Alt+Tab (window focus change)
                     current_hwnd = user32.GetForegroundWindow()
                     if current_hwnd != target_hwnd:
-                        self.app.macro_playback_stop = True
+                        self.app.craft_state.macro_playback_stop = True
                         break
                     
                     if i > 0:
@@ -561,16 +561,16 @@ class CraftManager:
                     self.app.root.after(0, lambda n=i+1: self.app.craft_status_lbl.config(text=f"Playing {n}/{repeats}... Alt+Tab to stop"))
                     
                     # Play macro with stop check
-                    self._play_macro_interruptible(self.app.recorded_macro, speed, target_hwnd)
+                    self._play_macro_interruptible(self.app.craft_state.recorded_macro, speed, target_hwnd)
                     
-                    if not self.app.macro_playback_stop:
+                    if not self.app.craft_state.macro_playback_stop:
                         played += 1
                 
                 # Ensure mouse released
                 user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                 
-                status = f"Stopped at {played}/{repeats}" if self.app.macro_playback_stop else f"Done! Played {repeats}x"
-                color = COLORS["warning"] if self.app.macro_playback_stop else COLORS["success"]
+                status = f"Stopped at {played}/{repeats}" if self.app.craft_state.macro_playback_stop else f"Done! Played {repeats}x"
+                color = COLORS["warning"] if self.app.craft_state.macro_playback_stop else COLORS["success"]
                 
                 self.app.root.after(0, lambda: (
                     self.app.craft_btn_drag.configure(state="normal"),
@@ -595,10 +595,10 @@ class CraftManager:
         for event in events:
             # Check for window change (Alt+Tab)
             if user32.GetForegroundWindow() != target_hwnd:
-                self.app.macro_playback_stop = True
+                self.app.craft_state.macro_playback_stop = True
                 return
             
-            if self.app.macro_playback_stop:
+            if self.app.craft_state.macro_playback_stop:
                 return
             
             timestamp, event_type, x, y = event
@@ -609,7 +609,7 @@ class CraftManager:
                 # Split delay into small chunks for responsive stopping
                 while delay > 0.05:
                     if user32.GetForegroundWindow() != target_hwnd:
-                        self.app.macro_playback_stop = True
+                        self.app.craft_state.macro_playback_stop = True
                         return
                     time.sleep(0.05)
                     delay -= 0.05
