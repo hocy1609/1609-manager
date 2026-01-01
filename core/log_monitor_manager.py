@@ -31,6 +31,23 @@ class LogMonitorManager:
             app: Reference to the NWNManagerApp instance
         """
         self.app = app
+
+    def initialize_state(self):
+        """Initialize log monitor-related state on the app (idempotent)."""
+        if getattr(self.app, "_log_monitor_state_initialized", False):
+            return
+
+        self.app.log_monitor_config = {
+            "enabled": False,
+            "log_path": "",
+            "webhooks": [],
+            "keywords": [],
+        }
+        self.app.log_monitor = None
+        self.app.slayer_monitor = None
+        self.app.slayer_hit_count = 0
+
+        self.app._log_monitor_state_initialized = True
     
     def on_log_match(self, text: str):
         """Callback when LogMonitor finds a keyword."""
@@ -340,6 +357,141 @@ class LogMonitorManager:
                 user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
             except Exception:
                 pass
+
+    def on_log_monitor_toggle(self):
+        """Handle toggle switch change - auto apply."""
+        enabled = self.app.log_monitor_enabled_var.get()
+        self.app.log_monitor_config["enabled"] = enabled
+        self.app.log_monitor_config["log_path"] = self.app.log_path_var.get()
+        self.app.log_monitor_config["webhooks"] = [
+            w.strip()
+            for w in self.app.webhooks_text.get("1.0", "end").strip().split("\n")
+            if w.strip()
+        ]
+        self.app.log_monitor_config["keywords"] = [
+            k.strip()
+            for k in self.app.keywords_text.get("1.0", "end").strip().split("\n")
+            if k.strip()
+        ]
+
+        self.app.save_data()
+        self.update_slayer_ui_state()
+
+        if enabled:
+            self.start_log_monitor()
+            self.app.log_monitor_status.config(text="Status: Running", fg=COLORS["success"])
+        else:
+            self.stop_log_monitor()
+            self.app.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
+
+    def update_slayer_ui_state(self):
+        """Update slayer (Open Wounds) UI elements based on slayer state."""
+        try:
+            slayer_cfg = self.app.log_monitor_config.get("open_wounds", {})
+            slayer_on = slayer_cfg.get("enabled", False)
+            log_monitor_on = self.app.log_monitor and self.app.log_monitor.is_running()
+            slayer_monitor_on = self.app.slayer_monitor and self.app.slayer_monitor.is_running()
+            slayer_active = slayer_on and (log_monitor_on or slayer_monitor_on)
+
+            fg_color = COLORS["fg_text"]
+
+            if hasattr(self.app, "ow_label"):
+                self.app.ow_label.config(fg=fg_color)
+            if hasattr(self.app, "ow_key_label"):
+                self.app.ow_key_label.config(fg=fg_color)
+
+            if hasattr(self.app, "ow_frame"):
+                if slayer_active:
+                    self.app.ow_frame.config(
+                        fg=COLORS["warning"],
+                        highlightbackground=COLORS["warning"],
+                        highlightcolor=COLORS["warning"],
+                        highlightthickness=2,
+                    )
+                elif slayer_on:
+                    self.app.ow_frame.config(
+                        fg=COLORS["accent"],
+                        highlightbackground=COLORS["border"],
+                        highlightcolor=COLORS["border"],
+                        highlightthickness=1,
+                    )
+                else:
+                    self.app.ow_frame.config(
+                        fg=COLORS["fg_dim"],
+                        highlightbackground=COLORS["border"],
+                        highlightcolor=COLORS["border"],
+                        highlightthickness=1,
+                    )
+
+            if hasattr(self.app, "ow_note"):
+                if slayer_active:
+                    mode = "via Log Monitor" if log_monitor_on else "standalone"
+                    self.app.ow_note.config(
+                        fg=COLORS["warning"],
+                        text=f"⚔️ Slayer is ACTIVE ({mode})",
+                    )
+                elif slayer_on:
+                    self.app.ow_note.config(
+                        fg=COLORS["accent"],
+                        text="⏳ Slayer enabled - waiting for game",
+                    )
+                else:
+                    self.app.ow_note.config(
+                        fg=COLORS["fg_dim"],
+                        text="Slayer works independently from Log Monitor",
+                    )
+
+            if hasattr(self.app, "slayer_counter_label"):
+                self.app.slayer_counter_label.config(text=f"Hits: {self.app.slayer_hit_count}")
+        except Exception:
+            pass
+
+    def browse_log_path(self):
+        from tkinter import filedialog
+
+        path = filedialog.askopenfilename(
+            title="Select Log File",
+            filetypes=[("Log files", "*.txt *.log"), ("All files", "*.*")],
+        )
+        if path:
+            self.app.log_path_var.set(path)
+
+    def save_log_monitor_settings(self):
+        """Save log monitor settings."""
+        from tkinter import messagebox
+
+        try:
+            self.app.log_monitor_config["enabled"] = self.app.log_monitor_enabled_var.get()
+            self.app.log_monitor_config["log_path"] = self.app.log_path_var.get()
+            self.app.log_monitor_config["webhooks"] = [
+                w.strip()
+                for w in self.app.webhooks_text.get("1.0", "end").strip().split("\n")
+                if w.strip()
+            ]
+            self.app.log_monitor_config["keywords"] = [
+                k.strip()
+                for k in self.app.keywords_text.get("1.0", "end").strip().split("\n")
+                if k.strip()
+            ]
+            try:
+                self.app.log_monitor_config["open_wounds"] = {
+                    "enabled": bool(self.app.open_wounds_enabled_var.get()),
+                    "key": str(self.app.open_wounds_key_var.get() or "F1"),
+                }
+            except Exception:
+                self.app.log_monitor_config["open_wounds"] = {"enabled": False, "key": "F1"}
+            self.app.save_data()
+
+            if self.app.log_monitor_config["enabled"]:
+                self.start_log_monitor()
+                self.app.log_monitor_status.config(text="Status: Running", fg=COLORS["success"])
+            else:
+                self.stop_log_monitor()
+                self.app.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
+
+            messagebox.showinfo("Success", "Log monitor settings saved!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save: {e}")
 
     def toggle_log_monitor_enabled(self):
         """Toggle log monitor on/off from UI."""

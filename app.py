@@ -14,32 +14,22 @@ import ctypes.wintypes
 from datetime import datetime
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
 
-from ui.ui_base import COLORS, ModernButton, TitleBarButton, setup_styles
-from ui.components import TitleBar, StatusBar, NavigationBar
+from ui.ui_base import COLORS
 from core.storage import SessionManager, SETTINGS_FILE, SESSIONS_FILE
 from ui.dialogs import (
-    EditDialog,
     CustomInputDialog,
-    AddServerDialog,
     RestoreBackupDialog,
-    LogMonitorDialog,
 )
 from utils.win_automation import (
     set_dpi_awareness,
     auto_detect_nwn_path,
     robust_update_settings_tml,
     safe_exit_sequence,
-    user32,
-    GWL_EXSTYLE,
-    WS_EX_APPWINDOW,
-    WS_EX_TOOLWINDOW,
-    SW_MINIMIZE,
     get_hwnd_from_pid,
     KEYEVENTF_KEYUP,
 )
-from utils.log_monitor import LogMonitor
 from core.models import (
     Settings,
     Profile,
@@ -48,18 +38,13 @@ from core.models import (
     load_settings,
     save_settings,
 )
-from ui.screens import (
-    build_home_screen,
-    build_craft_screen,
-    build_settings_screen,
-    build_log_monitor_screen,
-    build_help_screen,
-)
 from core.theme_manager import ThemeManager
 from core.log_monitor_manager import LogMonitorManager
 from core.craft_manager import CraftManager
 from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
+from core.ui_state import UIStateManager
+from core.server_manager import ServerManager
 
 
 set_dpi_awareness()
@@ -68,13 +53,9 @@ set_dpi_awareness()
 class NWNManagerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("16:09 Launcher")
-
-        width, height = 1000, 600
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        self.root.geometry(f"{width}x{height}+{(sw-width)//2}+{(sh-height)//2}")
-        self.root.configure(bg=COLORS["bg_root"])
-        self.root.overrideredirect(True)
+        self.ui_state_manager = UIStateManager(self)
+        self.ui_state_manager.configure_root_window()
+        self.ui_state_manager.initialize_state()
 
         if getattr(sys, "frozen", False):
             self.app_dir = os.path.dirname(sys.executable)
@@ -138,101 +119,21 @@ class NWNManagerApp:
 
         self.sessions = SessionManager(self.sessions_path)
 
-        # Variables
-        self.doc_path_var = tk.StringVar()
-        self.exe_path_var = tk.StringVar()
-        self.server_var = tk.StringVar()
-        self.use_server_var = tk.BooleanVar(value=True)
+        self.log_monitor_manager = LogMonitorManager(self)
+        self.log_monitor_manager.initialize_state()
 
-        self.exit_x, self.exit_y = 950, 640
-        self.confirm_x, self.confirm_y = 802, 613
+        self.craft_manager = CraftManager(self)
+        self.craft_manager.initialize_state()
 
-        self.profiles: list[dict] = []
-        self.servers: list[dict] = []
-        self.theme = "dark"
-        self.favorite_potions = set()
-        
-        # Craft vars
-        self.craft_running = False
-        self.recorded_macro = []
-        self.craft_vars = {
-            "selected_potion": tk.StringVar(),
-            "sequence": tk.StringVar(),
-            "action_key": tk.StringVar(value="Num0"),
-            "delay_action": tk.DoubleVar(value=0.2),
-            "delay_first": tk.DoubleVar(value=1.5),
-            "delay_seq": tk.DoubleVar(value=4.0),
-            "delay_r": tk.DoubleVar(value=1.5),
-            "repeat_before_r": tk.IntVar(value=5),
-            "potion_limit": tk.IntVar(value=0),
-            "selected_macro": tk.StringVar(),
-            "macro_speed": tk.DoubleVar(value=1.0),
-            "macro_repeats": tk.IntVar(value=1),
-        }
-        self.craft_log_path = tk.StringVar()
-        self.craft_log_position = 0
-        self.craft_real_count = 0
-        self.macro_playback_stop = False
-
-        self.current_profile: dict | None = None
-        
-        # Info panel entries
-        self.info_name = None
-        self.info_login = None
-        self.info_cdkey = None
-        self.show_key = False
-
-        self.view_map: list[dict] = []
-        self.drag_data = {"index": None}
-        self._drag_data = {"x": 0, "y": 0}
-
-        self.log_monitor_config = {
-            "enabled": False,
-            "log_path": "",
-            "webhooks": [],
-            "keywords": [],
-        }
-        self.log_monitor: LogMonitor | None = None
-        # Separate slayer monitor (runs independently when slayer is enabled)
-        self.slayer_monitor: LogMonitor | None = None
-        # Slayer hit counter
-        self.slayer_hit_count = 0
-        
-        # UI components
-        self.title_bar_comp = None
-        self.status_bar_comp = None
-        self.nav_bar_comp = None
-        
-        # UI helpers
-        self._last_session_count = -1  # Cache to prevent unnecessary list refreshes
-        self._last_running_state = None  # Cache to avoid redundant pack/pack_forget
-        
-        # Контролирующий профиль для каждого активного cdKey.
-        # Только этот профиль показывает элементы управления (перезапуск/закрыть).
-        self.controller_profile_by_cdkey: dict[str, str] = {}
-
-        self.current_screen = "home"
-        self.nav_frame = None
-        self.content_frame = None
-        self.screens = {}  # Словарь экранов {screen_name: frame}
+        self.profile_manager = ProfileManager(self)
+        self.settings_manager = SettingsManager(self)
+        self.server_manager = ServerManager(self)
 
         self.setup_styles()
         self.load_data()
-        
+
         # Initialize theme manager after load_data (needs self.theme)
         self.theme_manager = ThemeManager(self)
-        
-        # Initialize log monitor manager
-        self.log_monitor_manager = LogMonitorManager(self)
-        
-        # Initialize craft manager
-        self.craft_manager = CraftManager(self)
-        
-        # Initialize profile manager
-        self.profile_manager = ProfileManager(self)
-        
-        # Initialize settings manager
-        self.settings_manager = SettingsManager(self)
 
         self.create_ui()
         self.refresh_list()
@@ -323,64 +224,28 @@ class NWNManagerApp:
     # === СТИЛИ / ОКНО ===
 
     def setup_styles(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-
-        style.configure(
-            "TCheckbutton",
-            background=COLORS["bg_root"],
-            foreground=COLORS["fg_text"],
-            font=("Segoe UI", 10),
-            focuscolor=COLORS["bg_root"],
-        )
-
-        style.map(
-            "TCombobox",
-            fieldbackground=[("readonly", COLORS["bg_input"])],
-            selectbackground=[("readonly", COLORS["bg_input"])],
-            selectforeground=[("readonly", COLORS["fg_text"])],
-            background=[("readonly", COLORS["bg_panel"])],
-        )
-
-        style.configure(
-            "TCombobox",
-            background=COLORS["bg_panel"],
-            foreground=COLORS["fg_text"],
-            fieldbackground=COLORS["bg_input"],
-            arrowcolor=COLORS["fg_text"],
-            bordercolor=COLORS["border"],
-        )
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.setup_styles()
 
     def set_appwindow(self):
-        try:
-            hwnd = user32.GetParent(self.root.winfo_id())
-            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = style & ~WS_EX_TOOLWINDOW
-            style = style | WS_EX_APPWINDOW
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-            self.root.wm_withdraw()
-            self.root.after(10, self.root.wm_deiconify)
-        except Exception as e:
-            self.log_error("set_appwindow", e)
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.set_appwindow()
 
     def start_move(self, event):
-        self._drag_data["x"] = event.x
-        self._drag_data["y"] = event.y
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.start_move(event)
 
     def do_move(self, event):
-        x = self.root.winfo_x() + (event.x - self._drag_data["x"])
-        y = self.root.winfo_y() + (event.y - self._drag_data["y"])
-        self.root.geometry(f"+{x}+{y}")
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.do_move(event)
 
     def minimize_window(self):
-        try:
-            hwnd = user32.GetParent(self.root.winfo_id())
-            user32.ShowWindow(hwnd, SW_MINIMIZE)
-        except Exception:
-            self.root.iconify()
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.minimize_window()
 
     def close_app_window(self):
-        self.root.destroy()
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.close_app_window()
 
     # === ЗАГРУЗКА / СОХРАНЕНИЕ ===
 
@@ -877,213 +742,73 @@ class NWNManagerApp:
     # === СЕРВЕРЫ / ПИНГ ===
 
     def _on_server_selected(self):
-        """Called when user selects a server from combobox - save to current profile"""
-        try:
-            selected_server = self.server_var.get()
-            if self.current_profile and selected_server:
-                self.current_profile["server"] = selected_server
-                self.save_data()
-        except Exception as e:
-            self.log_error("_on_server_selected", e)
-        # Also check server status
-        self.check_server_status()
+        """Called when user selects a server from combobox - save to current profile."""
+        if hasattr(self, "server_manager"):
+            self.server_manager.on_server_selected()
 
     def check_server_status(self):
-        # Show status only when game NOT running; hide detailed status when running
-        try:
-            has_sessions = bool(getattr(self.sessions, "sessions", None))
-        except Exception:
-            has_sessions = False
-        if has_sessions and self.sessions.sessions:
-            try:
-                if self.status_lbl.cget("text") != "Game Running":
-                    self.status_lbl.config(text="Game Running", fg=COLORS.get("accent", "#ffaa00"))
-            except Exception:
-                pass
-            return
-
-        srv_val = self.cb_server.get().strip()
-        if not srv_val:
-            return
-
-        srv_ip_full = next(
-            (s["ip"] for s in self.servers if s["name"] == srv_val),
-            srv_val,
-        )
-
-        def ping_thread(ip_str: str):
-            try:
-                host = ip_str.split(":")[0] if ":" in ip_str else ip_str
-                cmd = ["ping", "-n", "1", "-w", "1000", host]
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                proc = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    startupinfo=startupinfo,
-                )
-                
-                new_text = "● Server Online" if proc.returncode == 0 else "● Server Offline"
-                new_fg = COLORS["success"] if proc.returncode == 0 else COLORS["offline"]
-                
-                def _update():
-                    try:
-                        if self.status_lbl.cget("text") != new_text:
-                            self.status_lbl.config(text=new_text, fg=new_fg)
-                    except Exception:
-                        pass
-                self.root.after(0, _update)
-
-            except Exception as e:
-                self.log_error("check_server_status", e)
-                self.root.after(
-                    0,
-                    lambda: self.status_lbl.config(
-                        text="● Connection Error",
-                        fg=COLORS["offline"],
-                    ),
-                )
-
-        # Do not set "Checking..." to avoid flicker. 
-        # Only update when result is ready.
-        threading.Thread(target=ping_thread, args=(srv_ip_full,)).start()
+        if hasattr(self, "server_manager"):
+            self.server_manager.check_server_status()
 
     # === UI ===
 
     def create_ui(self):
-        """Build main UI layout"""
-        # Title bar
-        self.title_bar_comp = TitleBar(self, self.root)
-        
-        # Main container
-        main_container = tk.Frame(self.root, bg=COLORS["bg_root"])
-        main_container.pack(fill="both", expand=True)
-        
-        # Navigation bar at top
-        self.nav_frame = tk.Frame(main_container, bg=COLORS["bg_panel"], height=60)
-        self.nav_frame.pack(fill="x", side="top")
-        self.nav_frame.pack_propagate(False)
-        
-        self.nav_bar_comp = NavigationBar(self, self.nav_frame)
-        
-        # Content area
-        self.content_frame = tk.Frame(main_container, bg=COLORS["bg_root"])
-        self.content_frame.pack(fill="both", expand=True)
-        
-        # Status bar at bottom
-        self.status_bar_comp = StatusBar(self, main_container)
-        
-        # Create all screens (using ScreenManager approach but manually for now)
-        self.create_home_screen()
-        self.create_craft_screen()
-        self.create_settings_screen()
-        self.create_log_monitor_screen()
-        self.create_help_screen()
-        
-        # Show home by default
-        self.show_screen("home")
-        
-        # Start status bar update loop
-        self._update_status_bar_loop()
+        """Build main UI layout."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.create_ui()
     
     def _update_status_bar_loop(self):
-        """Periodically update status bar information"""
-        try:
-            self._update_status_bar()
-        except Exception:
-            pass
-        # Update every 1 second
-        self.root.after(1000, self._update_status_bar_loop)
+        """Periodically update status bar information."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_status_bar_loop()
     
     def _update_status_bar(self):
-        """Update all status bar labels"""
-        if self.status_bar_comp:
-            self.status_bar_comp.update()
-        
-        # Update navigation indicators
-        self._update_nav_indicators()
-        
-        # Update slayer UI state periodically
-        try:
-            self._update_slayer_ui_state()
-        except Exception:
-            pass
+        """Update all status bar labels."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_status_bar()
     
     def _update_nav_indicators(self):
-        """Update navigation button indicators"""
-        if self.nav_bar_comp:
-            self.nav_bar_comp.update_indicators()
+        """Update navigation button indicators."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_nav_indicators()
     
     def _update_nav_btn_style(self, btn, screen_name):
-        """Update button style based on whether it's the active screen"""
-        if screen_name == self.current_screen:
-            btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
-        else:
-            btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+        """Update button style based on whether it's the active screen."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_nav_btn_style(btn, screen_name)
     
     def show_screen(self, screen_name):
-        """Switch to specified screen"""
-        # Hide all screens
-        for name, frame in self.screens.items():
-            frame.pack_forget()
-        
-        # Show selected screen
-        if screen_name in self.screens:
-            self.screens[screen_name].pack(fill="both", expand=True)
-            self.current_screen = screen_name
-            
-            # Update nav button states
-            for name, btn in self.nav_buttons.items():
-                if name == screen_name:
-                    btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
-                else:
-                    btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+        """Switch to specified screen."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.show_screen(screen_name)
     
     def create_home_screen(self):
         """Original main UI as home screen (delegated)."""
-        return build_home_screen(self)
+        if hasattr(self, "ui_state_manager"):
+            return self.ui_state_manager.create_home_screen()
+        return None
 
     # === Adaptive Layout Helpers ===
     def on_root_resize(self, event):
         """Listen to root size changes and switch layout mode when crossing threshold."""
-        try:
-            width = self.root.winfo_width()
-        except Exception:
-            return
-        threshold = 900
-        mode = "wide" if width >= threshold else "compact"
-        if mode == getattr(self, "_layout_mode", None):
-            return
-        self.apply_layout_mode(mode)
-        self._layout_mode = mode
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.on_root_resize(event)
 
     def apply_layout_mode(self, mode: str):
-        """Adaptive outer spacing only (упрощено после рефакторинга кнопок)."""
-        try:
-            self.update_spacing(mode)
-        except Exception as e:
-            self.log_error("apply_layout_mode", e)
+        """Adaptive outer spacing only (simplified)."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.apply_layout_mode(mode)
 
     def update_spacing(self, mode: str):
         """Scale paddings smoothly based on window width and mode."""
-        try:
-            w = self.root.winfo_width()
-            scale = max(0.0, min(1.0, (w - 700) / 600))  # 700..1300
-            base = 18 if mode == "compact" else 32
-            pad = int(base + 24 * scale)
-            # Adjust home content area outer padding
-            if hasattr(self, "home_content"):
-                try:
-                    self.home_content.pack_configure(padx=pad, pady=pad)
-                except Exception:
-                    pass
-        except Exception as e:
-            self.log_error("update_spacing", e)
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.update_spacing(mode)
 
     def create_craft_screen(self):
         """Craft screen with integrated craft UI - delegated."""
-        return build_craft_screen(self)
+        if hasattr(self, "ui_state_manager"):
+            return self.ui_state_manager.create_craft_screen()
+        return None
     
     def _craft_row(self, parent, row, label, var):
         """Create a settings row in grid. Delegates to CraftManager."""
@@ -1209,7 +934,9 @@ class NWNManagerApp:
     
     def create_settings_screen(self):
         """Settings screen - delegated."""
-        return build_settings_screen(self)
+        if hasattr(self, "ui_state_manager"):
+            return self.ui_state_manager.create_settings_screen()
+        return None
     
     def _browse_doc_path(self):
         path = filedialog.askdirectory(title="Select Documents Folder")
@@ -1237,159 +964,48 @@ class NWNManagerApp:
     
     def create_log_monitor_screen(self):
         """Log monitor screen - delegated."""
-        return build_log_monitor_screen(self)
+        if hasattr(self, "ui_state_manager"):
+            return self.ui_state_manager.create_log_monitor_screen()
+        return None
     
     def _on_log_monitor_toggle(self):
-        """Handle toggle switch change - auto apply"""
-        enabled = self.log_monitor_enabled_var.get()
-        self.log_monitor_config["enabled"] = enabled
-        self.log_monitor_config["log_path"] = self.log_path_var.get()
-        self.log_monitor_config["webhooks"] = [w.strip() for w in self.webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
-        self.log_monitor_config["keywords"] = [k.strip() for k in self.keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
-        
-        # Slayer now works independently - don't disable it when log monitor is disabled
-        
-        self.save_data()
-        self._update_slayer_ui_state()
-        
-        if enabled:
-            self.start_log_monitor()
-            self.log_monitor_status.config(text="Status: Running", fg=COLORS["success"])
-        else:
-            self.stop_log_monitor()
-            self.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
+        """Handle toggle switch change - auto apply."""
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.on_log_monitor_toggle()
     
     def _update_slayer_ui_state(self):
         """Update slayer (Open Wounds) UI elements based on slayer state."""
-        try:
-            slayer_cfg = self.log_monitor_config.get("open_wounds", {})
-            slayer_on = slayer_cfg.get("enabled", False)
-            log_monitor_on = self.log_monitor and self.log_monitor.is_running()
-            slayer_monitor_on = self.slayer_monitor and self.slayer_monitor.is_running()
-            slayer_active = slayer_on and (log_monitor_on or slayer_monitor_on)
-            
-            # Update visual appearance
-            fg_color = COLORS["fg_text"]
-            
-            if hasattr(self, 'ow_label'):
-                self.ow_label.config(fg=fg_color)
-            if hasattr(self, 'ow_key_label'):
-                self.ow_key_label.config(fg=fg_color)
-            
-            # Change frame border color based on slayer active state
-            if hasattr(self, 'ow_frame'):
-                if slayer_active:
-                    # Active slayer - highlight with warning color
-                    self.ow_frame.config(fg=COLORS["warning"], highlightbackground=COLORS["warning"], highlightcolor=COLORS["warning"], highlightthickness=2)
-                elif slayer_on:
-                    # Slayer enabled but not running (no game?)
-                    self.ow_frame.config(fg=COLORS["accent"], highlightbackground=COLORS["border"], highlightcolor=COLORS["border"], highlightthickness=1)
-                else:
-                    # Disabled state
-                    self.ow_frame.config(fg=COLORS["fg_dim"], highlightbackground=COLORS["border"], highlightcolor=COLORS["border"], highlightthickness=1)
-            
-            if hasattr(self, 'ow_note'):
-                if slayer_active:
-                    mode = "via Log Monitor" if log_monitor_on else "standalone"
-                    self.ow_note.config(fg=COLORS["warning"], text=f"⚔️ Slayer is ACTIVE ({mode})")
-                elif slayer_on:
-                    self.ow_note.config(fg=COLORS["accent"], text="⏳ Slayer enabled - waiting for game")
-                else:
-                    self.ow_note.config(fg=COLORS["fg_dim"], text="Slayer works independently from Log Monitor")
-            
-            # Update hit counter label
-            if hasattr(self, 'slayer_counter_label'):
-                self.slayer_counter_label.config(text=f"Hits: {self.slayer_hit_count}")
-        except Exception:
-            pass
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.update_slayer_ui_state()
     
     def _browse_log_path(self):
-        path = filedialog.askopenfilename(title="Select Log File", filetypes=[("Log files", "*.txt *.log"), ("All files", "*.*")])
-        if path:
-            self.log_path_var.set(path)
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.browse_log_path()
     
     def _save_log_monitor_settings(self):
-        """Save log monitor settings"""
-        try:
-            self.log_monitor_config["enabled"] = self.log_monitor_enabled_var.get()
-            self.log_monitor_config["log_path"] = self.log_path_var.get()
-            self.log_monitor_config["webhooks"] = [w.strip() for w in self.webhooks_text.get("1.0", "end").strip().split("\n") if w.strip()]
-            self.log_monitor_config["keywords"] = [k.strip() for k in self.keywords_text.get("1.0", "end").strip().split("\n") if k.strip()]
-            # persist Open Wounds settings
-            try:
-                self.log_monitor_config["open_wounds"] = {
-                    "enabled": bool(self.open_wounds_enabled_var.get()),
-                    "key": str(self.open_wounds_key_var.get() or "F1"),
-                }
-            except Exception:
-                self.log_monitor_config["open_wounds"] = {"enabled": False, "key": "F1"}
-            self.save_data()
-            
-            # Restart monitor if enabled
-            if self.log_monitor_config["enabled"]:
-                self.start_log_monitor()
-                self.log_monitor_status.config(text="Status: Running", fg=COLORS["success"])
-            else:
-                self.stop_log_monitor()
-                self.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
-            
-            messagebox.showinfo("Success", "Log monitor settings saved!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save: {e}")
+        """Save log monitor settings."""
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.save_log_monitor_settings()
     
     def create_help_screen(self):
         """Help screen - delegated."""
-        return build_help_screen(self)
+        if hasattr(self, "ui_state_manager"):
+            return self.ui_state_manager.create_help_screen()
+        return None
 
     # === СЕРВЕРЫ: CRUD ===
 
     def add_server(self):
-        def on_add(data: dict):
-            if not data.get("ip"):
-                return
-            self.servers.append(data)
-            self.save_data()
-            self.refresh_server_list()
-            self.server_var.set(data["name"])
-            self.check_server_status()
-
-        AddServerDialog(self.root, on_add)
+        if hasattr(self, "server_manager"):
+            self.server_manager.add_server()
 
     def remove_server(self):
-        current = self.server_var.get()
-        if not current:
-            return
-        is_saved = any(s["name"] == current for s in self.servers)
-        if not is_saved:
-            messagebox.showinfo(
-                "Info",
-                "This IP is not saved in the list.",
-                parent=self.root,
-            )
-            return
-        if len(self.servers) <= 1:
-            messagebox.showwarning(
-                "Warning",
-                "Cannot remove the last server!",
-                parent=self.root,
-            )
-            return
-        if messagebox.askyesno(
-            "Confirm",
-            f"Remove server '{current}'?",
-            parent=self.root,
-        ):
-            self.servers = [
-                s for s in self.servers if s["name"] != current
-            ]
-            self.save_data()
-            self.refresh_server_list()
-            self.server_var.set(self.servers[0]["name"])
-            self.check_server_status()
+        if hasattr(self, "server_manager"):
+            self.server_manager.remove_server()
 
     def refresh_server_list(self):
-        names = [s["name"] for s in self.servers]
-        self.cb_server["values"] = names
+        if hasattr(self, "server_manager"):
+            self.server_manager.refresh_server_list()
 
     # === СПИСОК ПРОФИЛЕЙ / DND ===
 
@@ -1549,16 +1165,9 @@ class NWNManagerApp:
                 self.refresh_list()
 
     def toggle_server_ui(self):
-        """Обновляет список серверов в комбобоксе и статус. Держим всегда активным."""
-        try:
-            srv_names = [s.get("name", "") for s in self.servers if s.get("ip")]
-            self.cb_server.configure(values=srv_names)
-        except Exception:
-            pass
-        try:
-            self.check_server_status()
-        except Exception:
-            pass
+        """Refresh server combobox and status."""
+        if hasattr(self, "server_manager"):
+            self.server_manager.toggle_server_ui()
 
     def monitor_processes(self):
         self.sessions.cleanup_dead()
