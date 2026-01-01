@@ -1,6 +1,7 @@
 import os
 import json
 import ctypes
+import logging
 
 from core.models import Settings, load_settings, save_settings
 
@@ -33,7 +34,7 @@ class SessionManager:
             with open(self.filepath, "w", encoding="utf-8") as f:
                 json.dump(self.sessions, f)
         except Exception:
-            pass
+            logging.exception("Unhandled exception")
 
     def add(self, key: str, pid: int) -> None:
         self.sessions[key] = pid
