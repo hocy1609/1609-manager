@@ -1,0 +1,53 @@
+{
+    "doc_path": "C:/Users/USER/Documents/Neverwinter Nights",
+    "exe_path": "C:/Path/To/Neverwinter Nights/bin/win32/nwmain.exe",
+    "servers": [
+        {
+            "name": "Siala Main (play.siala.online)",
+            "ip": "play.siala.online"
+        },
+        {
+            "name": "Siala Test",
+            "ip": "127.0.0.1:5122"
+        }
+    ],
+    "profiles": [
+        {
+            "name": "Example Profile",
+            "cdKey": "YOUR-CD-KEY-HERE",
+            "playerName": "PlayerName",
+            "category": "General",
+            "launchArgs": "",
+            "server": "",
+            "is_crafter": false
+        }
+    ],
+    "auto_connect": true,
+    "last_server": "",
+    "exit_coords_x": 950,
+    "exit_coords_y": 640,
+    "confirm_coords_x": 802,
+    "confirm_coords_y": 613,
+    "log_monitor": {
+        "enabled": false,
+        "log_path": "C:/Path/To/logs/nwclientLog1.txt",
+        "webhooks": [
+            "YOUR_WEBHOOK_URL_HERE"
+        ],
+        "keywords": [
+            "Enemy Spotted"
+        ],
+        "open_wounds": {
+            "enabled": true,
+            "key": "F1"
+        }
+    },
+    "exit_speed": 0.1,
+    "esc_count": 1,
+    "clip_margin": 48,
+    "show_tooltips": true,
+    "theme": "dark",
+    "favorite_potions": [
+        "Potion of Speed"
+    ]
+}
