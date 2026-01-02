@@ -1212,22 +1212,9 @@ class NWNManagerApp:
                 self.refresh_list()
 
     def toggle_server_ui(self):
-<<<<<<< HEAD
-        """Обновляет список серверов в комбобоксе и статус. Держим всегда активным."""
-        try:
-            srv_names = [s.get("name", "") for s in self.servers if s.get("ip")]
-            self.cb_server.configure(values=srv_names)
-        except Exception:
-            logging.exception("Unhandled exception")
-        try:
-            self.check_server_status()
-        except Exception:
-            logging.exception("Unhandled exception")
-=======
         """Refresh server combobox and status."""
         if hasattr(self, "server_manager"):
             self.server_manager.toggle_server_ui()
->>>>>>> origin/codex/refactor-nwnmanagerapp-into-managers
 
     def monitor_processes(self):
         self.sessions.cleanup_dead()
