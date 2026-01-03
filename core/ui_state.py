@@ -153,9 +153,9 @@ class UIStateManager:
         # Title bar
         app.title_bar_comp = TitleBar(app, app.root)
 
-        # Main container
+        # Main container (kept between title bar and status bar)
         main_container = tk.Frame(app.root, bg=COLORS["bg_root"])
-        main_container.pack(fill="both", expand=True)
+        main_container.pack(side="top", fill="both", expand=True)
 
         # Navigation bar at top
         app.nav_frame = tk.Frame(main_container, bg=COLORS["bg_panel"], height=60)
@@ -168,8 +168,8 @@ class UIStateManager:
         app.content_frame = tk.Frame(main_container, bg=COLORS["bg_root"])
         app.content_frame.pack(fill="both", expand=True)
 
-        # Status bar at bottom
-        app.status_bar_comp = StatusBar(app, main_container)
+        # Status bar at bottom (attach to root to avoid being obscured by content)
+        app.status_bar_comp = StatusBar(app, app.root)
 
         # Create all screens
         self.create_home_screen()
