@@ -728,6 +728,12 @@ def set_theme(name: str, root: tk.Widget | None = None):
             selectforeground=[("readonly", COLORS["fg_text"])],
             background=[("readonly", COLORS["bg_panel"])],
         )
+        # Style the dropdown list (Listbox) for Combobox - ttk.Style doesn't affect it
+        if root is not None:
+            root.option_add("*TCombobox*Listbox.background", COLORS["bg_input"])
+            root.option_add("*TCombobox*Listbox.foreground", COLORS["fg_text"])
+            root.option_add("*TCombobox*Listbox.selectBackground", COLORS["accent"])
+            root.option_add("*TCombobox*Listbox.selectForeground", COLORS["text_dark"])
     except Exception:
         pass
 

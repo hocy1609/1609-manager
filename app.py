@@ -48,6 +48,17 @@ from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
 from core.ui_state import UIStateManager
 from core.server_manager import ServerManager
+from core.error_handler import ErrorHandler
+from core.constants import (
+    PROCESS_MONITOR_INTERVAL_MS,
+    STARTUP_PATH_CHECK_DELAY_MS,
+    APPWINDOW_SETUP_DELAY_MS,
+    SAVE_DEBOUNCE_DELAY_MS,
+    LOG_FILENAME,
+    MAX_BACKUPS_PER_FILE,
+    GAME_EXIT_TIMEOUT_SECONDS,
+    GAME_EXIT_CHECK_INTERVAL,
+)
 
 
 def get_app_dir() -> str:
@@ -57,7 +68,7 @@ def get_app_dir() -> str:
 
 
 def get_default_log_path(data_dir: str) -> str:
-    return os.path.join(data_dir, "nwn_manager.log")
+    return os.path.join(data_dir, LOG_FILENAME)
 
 
 def configure_logging(log_path: str) -> None:
@@ -70,6 +81,8 @@ def configure_logging(log_path: str) -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # Configure centralized error handler
+    ErrorHandler.configure(log_path)
 
 
 set_dpi_awareness()
@@ -137,7 +150,7 @@ class NWNManagerApp:
         # copy it to the writable data dir on first run for sensible defaults.
         try:
             bundle_dir = getattr(sys, "_MEIPASS", self.app_dir)
-            default_settings_src = os.path.join(bundle_dir, SETTINGS_FILE)
+            default_settings_src = os.path.join(bundle_dir, "nwn_settings.example.json")
             if os.path.exists(default_settings_src) and not os.path.exists(self.settings_path):
                 try:
                     shutil.copyfile(default_settings_src, self.settings_path)
@@ -201,8 +214,8 @@ class NWNManagerApp:
         self.monitor_processes()
         self.check_server_status()
 
-        self.root.after(500, self.check_paths_silent)
-        self.root.after(10, self.set_appwindow)
+        self.root.after(STARTUP_PATH_CHECK_DELAY_MS, self.check_paths_silent)
+        self.root.after(APPWINDOW_SETUP_DELAY_MS, self.set_appwindow)
 
     @property
     def nav_buttons(self):
@@ -401,10 +414,10 @@ class NWNManagerApp:
         except Exception as e:
             self.log_error("save_data", e)
 
-    def schedule_save(self, delay_ms: int = 3000):
+    def schedule_save(self, delay_ms: int = SAVE_DEBOUNCE_DELAY_MS):
         """Debounced save: schedule `save_data` after `delay_ms` milliseconds, cancelling previous schedule.
 
-        Default 3000 ms chosen as a conservative slower debounce to reduce writes
+        Default delay chosen as a conservative slower debounce to reduce writes
         while still keeping settings reasonably responsive.
         """
         try:
@@ -673,7 +686,7 @@ class NWNManagerApp:
                     if f.startswith(file_type) and f.endswith(".bak")
                 ]
                 type_files.sort(key=os.path.getmtime)
-                while len(type_files) > 10:
+                while len(type_files) > MAX_BACKUPS_PER_FILE:
                     old_file = type_files.pop(0)
                     try:
                         os.remove(old_file)
@@ -1253,7 +1266,7 @@ class NWNManagerApp:
             self.update_launch_buttons()
         except Exception:
             logging.exception("Unhandled exception")
-        self.root.after(1000, self.monitor_processes)
+        self.root.after(PROCESS_MONITOR_INTERVAL_MS, self.monitor_processes)
 
     def is_current_running(self) -> bool:
         if not self.current_profile:
@@ -1642,13 +1655,14 @@ class NWNManagerApp:
         # Запускаем новый процесс, как только старый действительно выгружен,
         # вместо фиксированной задержки. Таймаут ~30 сек на случай зависания.
         def _wait_and_launch():
-            for _ in range(300):  # 300 * 0.1s = 30s максимум ожидания
+            max_iterations = int(GAME_EXIT_TIMEOUT_SECONDS / GAME_EXIT_CHECK_INTERVAL)
+            for _ in range(max_iterations):
                 try:
                     if key not in self.sessions.sessions:
                         break
                 except Exception:
                     break
-                time.sleep(0.1)
+                time.sleep(GAME_EXIT_CHECK_INTERVAL)
             try:
                 self.root.after(0, self.launch_game)
             except Exception:

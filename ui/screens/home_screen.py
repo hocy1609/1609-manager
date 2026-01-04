@@ -193,77 +193,15 @@ def build_home_screen(app):
         e.config(state="readonly")
         return e
 
-    self.info_name = info_row("Name:")
+    # self.info_name removed as requested
     self.info_login = info_row("Login:")
 
+    # Spacer to push bottom elements down (occupies remaining space)
     tk.Frame(content, bg=COLORS["bg_root"]).pack(fill="both", expand=True)
 
-    srv_frame = tk.Frame(content, bg=COLORS["bg_root"])
-    srv_frame.pack(fill="x", pady=(0, 20))
-
-    check_row = tk.Frame(srv_frame, bg=COLORS["bg_root"])
-    check_row.pack(fill="x")
-
-    ttk.Checkbutton(
-        check_row,
-        text="Auto-connect to server",
-        variable=self.use_server_var,
-        command=self.toggle_server_ui,
-    ).pack(side="left")
-
-    self.status_lbl = tk.Label(
-        check_row,
-        text="",
-        bg=COLORS["bg_root"],
-        fg=COLORS["fg_dim"],
-        font=("Segoe UI", 9),
-    )
-    self.status_lbl.pack(side="right")
-
-    srv_ctrl = tk.Frame(srv_frame, bg=COLORS["bg_root"])
-    srv_ctrl.pack(fill="x", pady=(5, 0))
-
-    srv_names = [s["name"] for s in self.servers]
-    self.cb_server = ttk.Combobox(
-        srv_ctrl,
-        textvariable=self.server_var,
-        values=srv_names,
-        font=("Segoe UI", 10),
-    )
-    self.cb_server.pack(
-        side="left",
-        fill="x",
-        expand=True,
-        ipady=4,
-    )
-
-    self.cb_server.bind("<<ComboboxSelected>>", lambda e: self._on_server_selected())
-
-    ModernButton(
-        srv_ctrl,
-        COLORS["bg_panel"],
-        COLORS["border"],
-        text="+",
-        width=3,
-        command=self.add_server,
-        tooltip="Add new server",
-    ).pack(side="left", padx=(5, 0))
-
-    ModernButton(
-        srv_ctrl,
-        COLORS["bg_panel"],
-        COLORS["border"],
-        text="-",
-        width=3,
-        command=self.remove_server,
-        tooltip="Remove selected server",
-    ).pack(side="left", padx=(5, 0))
-
-    self.toggle_server_ui()
-
-    # Bottom action bar
+    # Bottom action bar (Packed FIRST with side=bottom to be at the very bottom)
     bottom_actions = tk.Frame(content, bg=COLORS["bg_root"])
-    bottom_actions.pack(fill="x", pady=(10, 0))
+    bottom_actions.pack(side="bottom", fill="x", pady=(10, 0))
     self.btn_play = ModernButton(
         bottom_actions,
         COLORS["accent"],
@@ -299,6 +237,71 @@ def build_home_screen(app):
         tooltip="Безопасный выход из игры",
     )
     self.btn_close.pack(side="left")
+
+    # Server controls (Packed NEXT with side=bottom to be above buttons)
+    srv_frame = tk.Frame(content, bg=COLORS["bg_root"])
+    srv_frame.pack(side="bottom", fill="x", pady=(0, 20))
+
+    check_row = tk.Frame(srv_frame, bg=COLORS["bg_root"])
+    check_row.pack(fill="x")
+
+    ttk.Checkbutton(
+        check_row,
+        text="Auto-connect to server",
+        variable=self.use_server_var,
+        command=self.toggle_server_ui,
+    ).pack(side="left")
+
+    self.status_lbl = tk.Label(
+        check_row,
+        text="",
+        bg=COLORS["bg_root"],
+        fg=COLORS["fg_dim"],
+        font=("Segoe UI", 9),
+    )
+    self.status_lbl.pack(side="right")
+
+    self.srv_ctrl = tk.Frame(srv_frame, bg=COLORS["bg_root"])
+    self.srv_ctrl.pack(fill="x", pady=(5, 0))
+
+    srv_names = [s["name"] for s in self.servers]
+    self.cb_server = ttk.Combobox(
+        self.srv_ctrl,
+        textvariable=self.server_var,
+        values=srv_names,
+        font=("Segoe UI", 10),
+    )
+    self.cb_server.pack(
+        side="left",
+        fill="x",
+        expand=True,
+        ipady=4,
+    )
+
+    self.cb_server.bind("<<ComboboxSelected>>", lambda e: self._on_server_selected())
+
+    ModernButton(
+        self.srv_ctrl,
+        COLORS["bg_panel"],
+        COLORS["border"],
+        text="+",
+        width=3,
+        command=self.add_server,
+        tooltip="Add new server",
+    ).pack(side="left", padx=(5, 0))
+
+    ModernButton(
+        self.srv_ctrl,
+        COLORS["bg_panel"],
+        COLORS["border"],
+        text="-",
+        width=3,
+        command=self.remove_server,
+        tooltip="Remove selected server",
+    ).pack(side="left", padx=(5, 0))
+
+    self.toggle_server_ui()
+
     # Пакуем блок кнопок управления всегда (статусы меняются логикой)
 
     # Удалён старый блок запуска из панели профиля

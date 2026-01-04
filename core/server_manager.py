@@ -137,13 +137,22 @@ class ServerManager:
         self.app.cb_server["values"] = names
 
     def toggle_server_ui(self):
-        """Refresh server combobox and status."""
+        """Refresh server combobox and status, and toggle visibility."""
         try:
             srv_names = [s.get("name", "") for s in self.app.servers if s.get("ip")]
             self.app.cb_server.configure(values=srv_names)
         except Exception:
             pass
-        try:
-            self.check_server_status()
-        except Exception:
-            pass
+        
+        # Visibility logic removed: Server list is always visible.
+
+        if self.app.use_server_var.get():
+            try:
+                self.check_server_status()
+            except Exception:
+                pass
+        else:
+            try:
+                self.app.status_lbl.config(text="")
+            except Exception:
+                pass

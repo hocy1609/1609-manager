@@ -161,7 +161,7 @@ def build_log_monitor_screen(app):
     reset_btn.pack(side="left", padx=(0, 10))
 
     # Note about requirement
-    self.ow_note = tk.Label(ow_inner, text="(Requires Log Monitor to be enabled)", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9))
+    self.ow_note = tk.Label(ow_inner, text="Slayer works independently from Log Monitor", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9))
     self.ow_note.pack(anchor="w", pady=(5, 0))
 
     # Initial state update

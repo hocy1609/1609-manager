@@ -168,73 +168,126 @@ class StatusBar:
 
 
 class NavigationBar:
+    """Navigation bar using Frame+Label structure to avoid tk.Button hover flickering with emoji."""
+    
     def __init__(self, app, parent):
         self.app = app
         self.parent = parent
-        self.buttons = {}
+        self.buttons = {}  # screen -> frame widget
+        self._labels = {}  # screen -> label widget
+        self._hovered = set()  # Currently hovered buttons
         
         self.frame = tk.Frame(self.parent, bg=COLORS["bg_panel"])
         self.frame.pack(side="left", padx=20, pady=10)
         
-        # (text, screen, tooltip)
         btn_defs = [
             ("🏠 Home", "home", "Главный экран - управление аккаунтами и запуск игры"),
             ("🔨 Craft", "craft", "Автокрафт и управление макросами"),
             ("⚙️ Settings", "settings", "Настройки приложения"),
-            ("📊 Log Monitor", "log_monitor", "Мониторинг лога игры и Slayer"),
+            ("📊 Log Monitor", "log_monitor", "Мониторинг лога игры"),
             ("❓ Help", "help", "Справка и горячие клавиши"),
         ]
         
         for text, screen, tooltip_text in btn_defs:
-            btn = tk.Button(
+            # Container frame acts as the button
+            btn_frame = tk.Frame(
                 self.frame,
-                text=text,
-                command=lambda s=screen: self.app.show_screen(s),
                 bg=COLORS["bg_panel"],
-                fg=COLORS["fg_text"],
-                activebackground=COLORS["bg_input"],
-                activeforeground=COLORS["fg_text"],
-                bd=0,
-                relief="flat",
-                font=("Segoe UI", 10),
+                cursor="hand2",
                 padx=15,
                 pady=8,
-                cursor="hand2"
             )
-            btn.pack(side="left", padx=3)
-            # Hover effects
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=COLORS["bg_input"]))
-            btn.bind("<Leave>", lambda e, b=btn, s=screen: self.update_btn_style(b, s))
-            self.buttons[screen] = btn
-            # Add tooltip
-            ToolTip(btn, tooltip_text)
+            btn_frame.pack(side="left", padx=3)
+            
+            # Label inside frame shows text
+            label = tk.Label(
+                btn_frame,
+                text=text,
+                bg=COLORS["bg_panel"],
+                fg=COLORS["fg_text"],
+                font=("Segoe UI", 10),
+                cursor="hand2",
+            )
+            label.pack()
+            
+            # Store references
+            self.buttons[screen] = btn_frame
+            self._labels[screen] = label
+            
+            # Bind click to both frame and label
+            btn_frame.bind("<Button-1>", lambda e, s=screen: self._on_click(s))
+            label.bind("<Button-1>", lambda e, s=screen: self._on_click(s))
+            
+            # Simple hover - bind to frame only, label inherits
+            btn_frame.bind("<Enter>", lambda e, s=screen: self._on_hover(s, True), add="+")
+            btn_frame.bind("<Leave>", lambda e, s=screen: self._on_hover(s, False), add="+")
+            
+            # Tooltip
+            ToolTip(btn_frame, tooltip_text)
+    
+    def _on_click(self, screen):
+        """Handle button click."""
+        self.app.show_screen(screen)
+    
+    def _on_hover(self, screen, entering):
+        """Handle hover with simple state tracking."""
+        if entering:
+            if screen in self._hovered:
+                return
+            self._hovered.add(screen)
+            if screen != self.app.current_screen:
+                self._set_colors(screen, COLORS["bg_input"], COLORS["fg_text"])
+        else:
+            if screen not in self._hovered:
+                return
+            self._hovered.discard(screen)
+            self._update_style(screen)
+    
+    def _set_colors(self, screen, bg, fg):
+        """Set colors for a button."""
+        try:
+            self.buttons[screen].configure(bg=bg)
+            self._labels[screen].configure(bg=bg, fg=fg)
+        except Exception:
+            pass
+    
+    def _update_style(self, screen):
+        """Update button style based on active screen."""
+        if screen == self.app.current_screen:
+            self._set_colors(screen, COLORS["accent"], COLORS["text_dark"])
+        else:
+            self._set_colors(screen, COLORS["bg_panel"], COLORS["fg_text"])
 
     def update_btn_style(self, btn, screen_name):
-        """Update button style based on whether it's the active screen"""
-        if screen_name == self.app.current_screen:
-            btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
-        else:
-            btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+        """Legacy method for compatibility."""
+        self._update_style(screen_name)
 
     def update_indicators(self):
-        """Update indicators on navigation buttons (e.g. session count)"""
+        """Update indicators on navigation buttons."""
         try:
             # Home sessions indicator
             session_count = len(getattr(self.app.sessions, "sessions", {}) or {})
             home_text = f"🏠 Home ({session_count})" if session_count > 0 else "🏠 Home"
-            if "home" in self.buttons:
-                self.buttons["home"].config(text=home_text)
+            if "home" in self._labels:
+                current = self._labels["home"].cget("text")
+                if current != home_text:
+                    self._labels["home"].config(text=home_text)
             
             # Log monitor active indicator
             log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
             log_text = "📊 Log Monitor 🟢" if log_on else "📊 Log Monitor"
-            if "log_monitor" in self.buttons:
-                self.buttons["log_monitor"].config(text=log_text)
+            if "log_monitor" in self._labels:
+                current = self._labels["log_monitor"].cget("text")
+                if current != log_text:
+                    self._labels["log_monitor"].config(text=log_text)
         except Exception:
             pass
 
     def apply_theme(self):
-        """Update all buttons for theme switch"""
-        self.frame.config(bg=COLORS["bg_panel"])
-        for screen, btn in self.buttons.items():
-            self.update_btn_style(btn, screen)
+        """Update all buttons for theme switch."""
+        try:
+            self.frame.config(bg=COLORS["bg_panel"])
+            for screen in self.buttons:
+                self._update_style(screen)
+        except Exception:
+            pass

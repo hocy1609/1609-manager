@@ -233,7 +233,10 @@ class LogMonitorManager:
             self.app.log_error("update_log_monitor_status_label", e)
 
     def _handle_open_wounds_detection(self, line: str):
-        """If a log line indicates an Open Wounds hit, optionally press configured F-key."""
+        """If a log line indicates an Open Wounds hit, optionally press configured F-key.
+        
+        Includes a 2-second cooldown to match game ability cooldown.
+        """
         try:
             if not line:
                 return
@@ -241,8 +244,19 @@ class LogMonitorManager:
             if "open wounds hit" in ll:
                 cfg = self.app.log_monitor_state.config.get("open_wounds", {})
                 if cfg and cfg.get("enabled"):
+                    # Check cooldown (2 seconds to match game)
+                    current_time = time.time()
+                    last_activation = getattr(self, '_last_open_wounds_activation', 0)
+                    if current_time - last_activation < 2.0:
+                        # Still on cooldown, skip key press
+                        return
+                    
+                    # Update last activation time
+                    self._last_open_wounds_activation = current_time
+                    
                     key = cfg.get("key", "F1")
                     self._send_function_key_to_active_session(key)
+                    
                     # Increment slayer hit counter
                     self.app.log_monitor_state.slayer_hit_count += 1
                     self._update_slayer_hit_counter_ui()

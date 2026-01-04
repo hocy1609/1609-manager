@@ -177,34 +177,10 @@ class ThemeManager:
             # Update nav_frame background
             if hasattr(self.app, 'nav_frame') and self.app.nav_frame:
                 self.app.nav_frame.configure(bg=COLORS["bg_panel"])
-                for child in self.app.nav_frame.winfo_children():
-                    try:
-                        child.configure(bg=COLORS["bg_panel"])
-                    except:
-                        pass
-                    for subchild in child.winfo_children():
-                        try:
-                            if subchild.winfo_class() == "Button":
-                                # Check if it's the active screen
-                                for screen, btn in self.app.nav_buttons.items():
-                                    if btn == subchild:
-                                        if screen == self.app.current_screen:
-                                            subchild.configure(
-                                                bg=COLORS["accent"],
-                                                fg=COLORS["text_dark"],
-                                                activebackground=COLORS["accent_hover"]
-                                            )
-                                        else:
-                                            subchild.configure(
-                                                bg=COLORS["bg_panel"],
-                                                fg=COLORS["fg_text"],
-                                                activebackground=COLORS["bg_input"]
-                                            )
-                                        break
-                            else:
-                                subchild.configure(bg=COLORS["bg_panel"])
-                        except:
-                            pass
+                
+            # Use NavigationBar's apply_theme method
+            if hasattr(self.app, 'nav_bar_comp') and self.app.nav_bar_comp:
+                self.app.nav_bar_comp.apply_theme()
         except Exception:
             pass
     

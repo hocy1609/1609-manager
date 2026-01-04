@@ -111,6 +111,12 @@ class UIStateManager:
             arrowcolor=COLORS["fg_text"],
             bordercolor=COLORS["border"],
         )
+        
+        # Style the dropdown list (Listbox) for Combobox - ttk.Style doesn't affect it
+        self.app.root.option_add("*TCombobox*Listbox.background", COLORS["bg_input"])
+        self.app.root.option_add("*TCombobox*Listbox.foreground", COLORS["fg_text"])
+        self.app.root.option_add("*TCombobox*Listbox.selectBackground", COLORS["accent"])
+        self.app.root.option_add("*TCombobox*Listbox.selectForeground", COLORS["text_dark"])
 
     def set_appwindow(self):
         from utils.win_automation import user32, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW
@@ -153,6 +159,10 @@ class UIStateManager:
         # Title bar
         app.title_bar_comp = TitleBar(app, app.root)
 
+        # Status bar at bottom (attach to root to avoid being obscured by content)
+        # Pack before main container so it reserves space at bottom
+        app.status_bar_comp = StatusBar(app, app.root)
+
         # Main container (kept between title bar and status bar)
         main_container = tk.Frame(app.root, bg=COLORS["bg_root"])
         main_container.pack(side="top", fill="both", expand=True)
@@ -168,8 +178,6 @@ class UIStateManager:
         app.content_frame = tk.Frame(main_container, bg=COLORS["bg_root"])
         app.content_frame.pack(fill="both", expand=True)
 
-        # Status bar at bottom (attach to root to avoid being obscured by content)
-        app.status_bar_comp = StatusBar(app, app.root)
 
         # Create all screens
         self.create_home_screen()
@@ -227,11 +235,10 @@ class UIStateManager:
             self.app.screens[screen_name].pack(fill="both", expand=True)
             self.app.current_screen = screen_name
 
-            for name, btn in self.app.nav_buttons.items():
-                if name == screen_name:
-                    btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
-                else:
-                    btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+            # Update navigation bar button styles
+            if self.app.nav_bar_comp:
+                for name in self.app.nav_bar_comp.buttons:
+                    self.app.nav_bar_comp._update_style(name)
 
     def create_home_screen(self):
         """Original main UI as home screen (delegated)."""

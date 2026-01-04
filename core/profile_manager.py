@@ -364,7 +364,6 @@ class ProfileManager:
             entry.configure(state=state)
             
         try:
-            set_val(self.app.info_name, p.get("name", ""))
             set_val(self.app.info_login, p.get("playerName", ""))
             
             # Mask cdkey
