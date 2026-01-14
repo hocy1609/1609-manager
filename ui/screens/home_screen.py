@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from ui.ui_base import COLORS, ModernButton
+from ui.ui_base import COLORS, ModernButton, Separator
 
 
 def build_home_screen(app):
@@ -23,15 +23,21 @@ def build_home_screen(app):
     sidebar.pack(side="left", fill="y")
     sidebar.pack_propagate(False)
 
+    # Sidebar header with accent underline
     accounts_header = tk.Frame(sidebar, bg=COLORS["bg_panel"])
-    accounts_header.pack(fill="x", padx=10, pady=(25, 10))
+    accounts_header.pack(fill="x", padx=15, pady=(20, 5))
+    
+    header_left = tk.Frame(accounts_header, bg=COLORS["bg_panel"])
+    header_left.pack(side="left", fill="x", expand=True)
+    
     tk.Label(
-        accounts_header,
+        header_left,
         text="ACCOUNTS",
         bg=COLORS["bg_panel"],
-        fg=COLORS["fg_dim"],
-        font=("Segoe UI", 10, "bold"),
+        fg=COLORS["accent"],
+        font=("Segoe UI", 11, "bold"),
     ).pack(side="left")
+    
     self.btn_add_profile_side = ModernButton(
         accounts_header,
         COLORS["accent"],
@@ -42,6 +48,12 @@ def build_home_screen(app):
         tooltip="Добавить профиль",
     )
     self.btn_add_profile_side.pack(side="right")
+    
+    # Header underline
+    tk.Frame(sidebar, bg=COLORS["accent"], height=2).pack(fill="x", padx=15, pady=(5, 15))
+
+    # Vertical separator between sidebar and content
+    Separator(game_split, orient="vertical", color=COLORS["border"], thickness=1, padding=0).pack(side="left", fill="y")
 
     accounts_wrap = tk.Frame(sidebar, bg=COLORS["bg_panel"])
     accounts_wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -49,12 +61,13 @@ def build_home_screen(app):
         accounts_wrap,
         bg=COLORS["bg_panel"],
         fg=COLORS["fg_text"],
-        selectbackground=COLORS["bg_input"],
-        selectforeground=COLORS["accent"],
+        selectbackground=COLORS["accent"],
+        selectforeground=COLORS["bg_panel"],
         bd=0,
         highlightthickness=0,
         font=("Segoe UI", 11),
         activestyle="none",
+        exportselection=False,
     )
     self.lb.pack(side="left", fill="both", expand=True)
 
@@ -111,18 +124,95 @@ def build_home_screen(app):
 
     # --- Content Area ---
     content = tk.Frame(game_split, bg=COLORS["bg_root"])
-    content.pack(side="left", fill="both", expand=True, padx=40, pady=40)
+    # Reduced padding to prevent clipping on small screens/high scaling
+    content.pack(side="left", fill="both", expand=True, padx=30, pady=20)
     self.home_content = content
 
+    # Header row with title and server group switcher
+    header_row = tk.Frame(content, bg=COLORS["bg_root"])
+    header_row.pack(fill="x", pady=(0, 5))
+    
     self.header_lbl = tk.Label(
-        content,
+        header_row,
         text="Select Profile",
         bg=COLORS["bg_root"],
         fg=COLORS["fg_text"],
         font=("Segoe UI", 26, "bold"),
     )
-    self.header_lbl.pack(anchor="w", pady=(0, 5))
-
+    self.header_lbl.pack(side="left")
+    
+    # Server Group Switcher (right side of header)
+    group_frame = tk.Frame(header_row, bg=COLORS["bg_root"])
+    group_frame.pack(side="right")
+    
+    def _switch_server_group(group_name):
+        """Switch to a different server group."""
+        if self.server_group == group_name:
+            return
+        # Save current group's servers
+        self.server_groups[self.server_group] = self.servers
+        # Switch to new group
+        self.server_group = group_name
+        self.servers = self.server_groups.get(group_name, [])
+        # Reset server selection
+        if self.servers:
+            self.server_var.set(self.servers[0]["name"])
+        else:
+            self.server_var.set("")
+        # Save group to current profile
+        if self.current_profile:
+            self.current_profile["server_group"] = group_name
+            self.current_profile["server"] = self.server_var.get()
+        # Update UI
+        _update_group_buttons()
+        self._create_server_buttons()
+        # Trigger ping for new servers
+        self.root.after(100, self.server_manager.ping_all_servers)
+        self.save_data()
+    
+    def _update_group_buttons():
+        """Update visual state of group toggle buttons."""
+        for grp, btn in self.server_group_buttons.items():
+            if grp == self.server_group:
+                btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
+                btn.bg_color = COLORS["accent"]
+            else:
+                btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+                btn.bg_color = COLORS["bg_panel"]
+    
+    self.server_group_buttons = {}
+    
+    btn_siala = ModernButton(
+        group_frame,
+        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'siala' else COLORS["bg_panel"],
+        COLORS["accent_hover"],
+        text="Siala",
+        font=("Segoe UI", 9),
+        width=8,
+        command=lambda: _switch_server_group("siala"),
+        tooltip="Switch to Siala servers",
+    )
+    btn_siala.pack(side="left", padx=(0, 2))
+    self.server_group_buttons["siala"] = btn_siala
+    
+    btn_cormyr = ModernButton(
+        group_frame,
+        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'cormyr' else COLORS["bg_panel"],
+        COLORS["accent_hover"],
+        text="Cormyr",
+        font=("Segoe UI", 9),
+        width=8,
+        command=lambda: _switch_server_group("cormyr"),
+        tooltip="Switch to Cormyr servers",
+    )
+    btn_cormyr.pack(side="left")
+    self.server_group_buttons["cormyr"] = btn_cormyr
+    
+    self._update_group_buttons = _update_group_buttons
+    
+    # Update group button styles based on current group
+    self.root.after(100, _update_group_buttons)
+    
     self.cat_lbl = tk.Label(
         content,
         text="",
@@ -133,10 +223,10 @@ def build_home_screen(app):
     self.cat_lbl.pack(anchor="w")
 
     self.info_frame = tk.Frame(content, bg=COLORS["bg_root"])
-    self.info_frame.pack(fill="x", pady=20)
+    self.info_frame.pack(fill="x", pady=10) # Reduced pady
 
     f_key = tk.Frame(self.info_frame, bg=COLORS["bg_root"])
-    f_key.pack(fill="x", pady=8)
+    f_key.pack(fill="x", pady=4) # Reduced pady
 
     tk.Label(
         f_key,
@@ -173,7 +263,7 @@ def build_home_screen(app):
 
     def info_row(label: str):
         f = tk.Frame(self.info_frame, bg=COLORS["bg_root"])
-        f.pack(fill="x", pady=8)
+        f.pack(fill="x", pady=4) # Reduced pady
         tk.Label(
             f,
             text=label,
@@ -196,12 +286,11 @@ def build_home_screen(app):
     # self.info_name removed as requested
     self.info_login = info_row("Login:")
 
-    # Spacer to push bottom elements down (occupies remaining space)
-    tk.Frame(content, bg=COLORS["bg_root"]).pack(fill="both", expand=True)
+    # Spacer removed, relies on top/bottom packing
 
-    # Bottom action bar (Packed FIRST with side=bottom to be at the very bottom)
+    # Bottom action bar
     bottom_actions = tk.Frame(content, bg=COLORS["bg_root"])
-    bottom_actions.pack(side="bottom", fill="x", pady=(10, 0))
+    bottom_actions.pack(side="bottom", fill="x", pady=(5, 0)) # Reduced pady
     self.btn_play = ModernButton(
         bottom_actions,
         COLORS["accent"],
@@ -238,22 +327,73 @@ def build_home_screen(app):
     )
     self.btn_close.pack(side="left")
 
-    # Server controls (Packed NEXT with side=bottom to be above buttons)
+    # Server controls - clickable buttons instead of dropdown
     srv_frame = tk.Frame(content, bg=COLORS["bg_root"])
-    srv_frame.pack(side="bottom", fill="x", pady=(0, 20))
+    srv_frame.pack(side="bottom", fill="x", pady=(0, 10)) # Reduced pady
 
-    check_row = tk.Frame(srv_frame, bg=COLORS["bg_root"])
-    check_row.pack(fill="x")
-
-    ttk.Checkbutton(
-        check_row,
-        text="Auto-connect to server",
-        variable=self.use_server_var,
-        command=self.toggle_server_ui,
+    # Header row with label, add/edit buttons, and status
+    srv_header = tk.Frame(srv_frame, bg=COLORS["bg_root"])
+    srv_header.pack(fill="x")
+    
+    tk.Label(
+        srv_header,
+        text="Servers",
+        bg=COLORS["bg_root"],
+        fg=COLORS["accent"],
+        font=("Segoe UI", 11, "bold"),
     ).pack(side="left")
-
+    
+    # Add and Edit buttons next to label
+    def _open_server_management():
+        from ui.dialogs import ServerManagementDialog
+        def on_save(new_servers):
+            self.servers = new_servers
+            self.save_data()
+            _create_server_buttons()
+        ServerManagementDialog(self.root, self.servers, on_save)
+    
+    ModernButton(
+        srv_header,
+        COLORS["accent"],
+        COLORS["accent_hover"],
+        text="+",
+        width=3,
+        command=lambda: (self.add_server(), _create_server_buttons()),
+        tooltip="Add new server",
+    ).pack(side="left", padx=(10, 0))
+    
+    ModernButton(
+        srv_header,
+        COLORS["bg_panel"],
+        COLORS["border"],
+        text="✎",
+        width=3,
+        command=_open_server_management,
+        tooltip="Manage servers (add/edit/delete)",
+    ).pack(side="left", padx=(5, 0))
+    
+    # Auto-connect toggle
+    auto_connect_frame = tk.Frame(srv_header, bg=COLORS["bg_root"])
+    auto_connect_frame.pack(side="left", padx=(15, 0))
+    
+    tk.Label(
+        auto_connect_frame,
+        text="Auto:",
+        bg=COLORS["bg_root"],
+        fg=COLORS["fg_dim"],
+        font=("Segoe UI", 9),
+    ).pack(side="left")
+    
+    def _on_auto_connect_toggle():
+        self.save_data()
+    
+    from ui.ui_base import ToggleSwitch, ToolTip
+    auto_toggle = ToggleSwitch(auto_connect_frame, variable=self.use_server_var, command=_on_auto_connect_toggle)
+    auto_toggle.pack(side="left", padx=(5, 0))
+    ToolTip(auto_toggle, "Auto-connect to selected server on launch")
+    
     self.status_lbl = tk.Label(
-        check_row,
+        srv_header,
         text="",
         bg=COLORS["bg_root"],
         fg=COLORS["fg_dim"],
@@ -261,47 +401,152 @@ def build_home_screen(app):
     )
     self.status_lbl.pack(side="right")
 
-    self.srv_ctrl = tk.Frame(srv_frame, bg=COLORS["bg_root"])
-    self.srv_ctrl.pack(fill="x", pady=(5, 0))
+    # Server buttons container with scrolling if many servers
+    srv_scroll_frame = tk.Frame(srv_frame, bg=COLORS["bg_root"])
+    srv_scroll_frame.pack(fill="x", pady=(5, 5))
+    
+    # Create canvas for scrolling
+    srv_canvas = tk.Canvas(srv_scroll_frame, bg=COLORS["bg_root"], highlightthickness=0, height=80)
+    srv_canvas.pack(side="left", fill="both", expand=True)
+    
+    # Scrollbar (hidden by default, appears if needed)
+    srv_scrollbar = ttk.Scrollbar(srv_scroll_frame, orient="vertical", command=srv_canvas.yview)
+    srv_canvas.configure(yscrollcommand=srv_scrollbar.set)
+    
+    self.srv_buttons_frame = tk.Frame(srv_canvas, bg=COLORS["bg_root"])
+    canvas_window = srv_canvas.create_window((0, 0), window=self.srv_buttons_frame, anchor="nw")
+    
+    def _on_srv_frame_configure(e):
+        srv_canvas.configure(scrollregion=srv_canvas.bbox("all"))
+        # Show scrollbar only if content is taller than canvas
+        if self.srv_buttons_frame.winfo_reqheight() > srv_canvas.winfo_height():
+            srv_scrollbar.pack(side="right", fill="y")
+        else:
+            srv_scrollbar.pack_forget()
+    
+    def _on_srv_canvas_configure(e):
+        srv_canvas.itemconfig(canvas_window, width=e.width)
+    
+    self.srv_buttons_frame.bind("<Configure>", _on_srv_frame_configure)
+    srv_canvas.bind("<Configure>", _on_srv_canvas_configure)
+    
+    # Mouse wheel scrolling
+    def _srv_mousewheel(e):
+        srv_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+    srv_canvas.bind("<MouseWheel>", _srv_mousewheel)
+    self.srv_buttons_frame.bind("<MouseWheel>", _srv_mousewheel)
+    
+    # Keep server_var for compatibility but set via buttons
+    self.srv_ctrl = tk.Frame(srv_frame, bg=COLORS["bg_root"])  # Hidden, for toggle_server_ui
+    
+    self.server_buttons_map = {}
+    self.server_latencies = {}  # Store latencies for best/worst calculation
 
-    srv_names = [s["name"] for s in self.servers]
-    self.cb_server = ttk.Combobox(
-        self.srv_ctrl,
-        textvariable=self.server_var,
-        values=srv_names,
-        font=("Segoe UI", 10),
-    )
-    self.cb_server.pack(
-        side="left",
-        fill="x",
-        expand=True,
-        ipady=4,
-    )
+    def _create_server_buttons():
+        """Recreate server buttons when list changes."""
+        self.server_buttons_map.clear()
+        self.server_latencies.clear()
+        
+        for widget in self.srv_buttons_frame.winfo_children():
+            widget.destroy()
+        
+        current_row_frame = None
+        COLS = 2
+        
+        for i, s in enumerate(self.servers):
+            # Create new row frame every COLS buttons
+            if i % COLS == 0:
+                current_row_frame = tk.Frame(self.srv_buttons_frame, bg=COLORS["bg_root"])
+                current_row_frame.pack(side="top", fill="x", pady=2)
+            
+            srv_name = s["name"]
+            
+            def make_cmd(name=srv_name):
+                def cmd():
+                    self.server_var.set(name)
+                    self.use_server_var.set(True)
+                    self._on_server_selected()
+                    _update_server_button_styles()
+                return cmd
+            
+            # Initial text is just name
+            btn = ModernButton(
+                current_row_frame,
+                COLORS["bg_panel"],
+                COLORS["accent"],
+                text=srv_name,
+                font=("Segoe UI", 9),
+                pady=4,
+                command=make_cmd(),
+                tooltip=f"Connect to {srv_name}",
+            )
+            # Expand=True makes buttons share width equally in the row
+            btn.pack(side="left", fill="x", expand=True, padx=2)
+            btn._server_name = srv_name
+            self.server_buttons_map[srv_name] = btn
+        
+        _update_server_button_styles()
 
-    self.cb_server.bind("<<ComboboxSelected>>", lambda e: self._on_server_selected())
+    def update_server_latency(name: str, ms: int):
+        """Update button text with ping time and best/worst indicators."""
+        btn = self.server_buttons_map.get(name)
+        if not btn:
+            return
+        
+        # Store latency
+        self.server_latencies[name] = ms
+        
+        # Calculate best and worst in current group
+        valid_latencies = {n: l for n, l in self.server_latencies.items() if l > 0}
+        best_name = min(valid_latencies, key=valid_latencies.get) if valid_latencies else None
+        worst_name = max(valid_latencies, key=valid_latencies.get) if valid_latencies else None
+        
+        # Update all buttons with indicators
+        for srv_name, srv_btn in self.server_buttons_map.items():
+            lat = self.server_latencies.get(srv_name)
+            if lat is None:
+                continue
+            
+            if lat < 0:
+                ping_text = f"{srv_name} (⚠ Off)"
+            elif srv_name == best_name and len(valid_latencies) > 1:
+                ping_text = f"{srv_name} (✓ {lat}ms)"
+            elif srv_name == worst_name and len(valid_latencies) > 1:
+                ping_text = f"{srv_name} (⚠ {lat}ms)"
+            else:
+                ping_text = f"{srv_name} ({lat}ms)"
+            
+            if srv_btn.cget("text") != ping_text:
+                srv_btn.config(text=ping_text)
 
-    ModernButton(
-        self.srv_ctrl,
-        COLORS["bg_panel"],
-        COLORS["border"],
-        text="+",
-        width=3,
-        command=self.add_server,
-        tooltip="Add new server",
-    ).pack(side="left", padx=(5, 0))
+    self.update_server_latency = update_server_latency
 
-    ModernButton(
-        self.srv_ctrl,
-        COLORS["bg_panel"],
-        COLORS["border"],
-        text="-",
-        width=3,
-        command=self.remove_server,
-        tooltip="Remove selected server",
-    ).pack(side="left", padx=(5, 0))
+    def _update_server_button_styles():
+        """Highlight currently selected server button."""
+        current = self.server_var.get()
+        for srv_name, btn in self.server_buttons_map.items():
+            if srv_name == current:
+                btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
+                btn.bg_color = COLORS["accent"]
+            else:
+                btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+                btn.bg_color = COLORS["bg_panel"]
+    
+    self._create_server_buttons = _create_server_buttons
+    self._update_server_button_styles = _update_server_button_styles
+    
+    _create_server_buttons()
+    
+    # Trigger initial ping and start auto-refresh every 60 seconds
+    self.root.after(500, self.server_manager.ping_all_servers)
+    self.root.after(1000, self.server_manager.start_auto_ping)
 
-    self.toggle_server_ui()
+    # Keep use_server_var always True now (auto-connect when server selected)
+    self.use_server_var.set(True)
 
+    # Pack spacer REMOVED - relying on natural side=top vs side=bottom separation
+    # This avoids conflict where spacer consumes space needed by auto-expanding bottom frames
+    
     # Пакуем блок кнопок управления всегда (статусы меняются логикой)
 
     # Удалён старый блок запуска из панели профиля

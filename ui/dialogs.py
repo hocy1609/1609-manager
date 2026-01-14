@@ -198,7 +198,7 @@ class SettingsDialog(BaseDialog):
 
         # Theme selector
         tk.Label(af, text="Theme:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).grid(row=2, column=0, sticky="w", pady=(8,0))
-        theme_cb = ttk.Combobox(af, textvariable=self.vars["theme"], values=["dark","purple","blue","light","mint","rose","bw","fluent"], width=12)
+        theme_cb = ttk.Combobox(af, textvariable=self.vars["theme"], values=["dark","purple","blue","light","mint","rose","bw"], width=12)
         theme_cb.grid(row=2, column=1, sticky="w", pady=(8,0))
         # Theme is applied on Save, not live
 
@@ -407,13 +407,14 @@ class HelpDialog(BaseDialog):
 
 
 class EditDialog(BaseDialog):
-    def __init__(self, parent, profile_data=None, existing_categories=None, on_save=None, *, title=None, categories=None, server_list=None, is_new=False):
+    def __init__(self, parent, profile_data=None, existing_categories=None, on_save=None, *, title=None, categories=None, server_list=None, is_new=False, saved_keys=None):
         # Support both calling conventions
         cats = categories or existing_categories or ["General"]
         profile = profile_data if profile_data else {}
         dialog_title = title or ("Add Profile" if is_new else "Edit Profile")
-        super().__init__(parent, dialog_title, 500, 520)
+        super().__init__(parent, dialog_title, 500, 560)
         self.on_save = on_save
+        self.saved_keys = saved_keys or []
 
         self.name_var = tk.StringVar(value=profile.get("name", ""))
         self.cat_var = tk.StringVar(
@@ -449,9 +450,54 @@ class EditDialog(BaseDialog):
         )
         cat_cb.pack(fill="x", padx=padding, ipady=4)
 
-        # CD Key field - keep a reference so we can add hint/tooltip
+        # CD Key section with saved keys dropdown
+        key_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        key_frame.pack(fill="x", padx=padding, pady=(10, 0))
+        
+        tk.Label(
+            key_frame,
+            text="CD Key:",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+        
+        # Saved keys dropdown
+        if self.saved_keys:
+            key_select_frame = tk.Frame(content, bg=COLORS["bg_root"])
+            key_select_frame.pack(fill="x", padx=padding, pady=(2, 5))
+            
+            tk.Label(
+                key_select_frame,
+                text="Use saved:",
+                bg=COLORS["bg_root"],
+                fg=COLORS["fg_dim"],
+                font=("Segoe UI", 9),
+            ).pack(side="left")
+            
+            key_names = [""] + [k.get("name", "Key") for k in self.saved_keys]
+            self.key_select_var = tk.StringVar(value="")
+            
+            def on_key_select(event=None):
+                selected = self.key_select_var.get()
+                for k in self.saved_keys:
+                    if k.get("name") == selected:
+                        self.key_var.set(k.get("key", ""))
+                        break
+            
+            key_combo = ttk.Combobox(
+                key_select_frame,
+                textvariable=self.key_select_var,
+                values=key_names,
+                font=("Segoe UI", 9),
+                width=20,
+            )
+            key_combo.pack(side="left", padx=(5, 0))
+            key_combo.bind("<<ComboboxSelected>>", on_key_select)
+        
+        # CD Key entry field
         self.key_entry = self.create_field(
-            content, "CD Key (nwncdkey.ini):", self.key_var, padding
+            content, "", self.key_var, padding
         )
         # Small inline hint and tooltip for expected format
         try:
@@ -700,6 +746,213 @@ class AddServerDialog(BaseDialog):
                 "Both fields are required",
                 parent=self,
             )
+
+
+class ServerManagementDialog(BaseDialog):
+    """Dialog for managing servers (add/edit/delete) in current group."""
+    
+    def __init__(self, parent, servers: list, on_save):
+        super().__init__(parent, "Manage Servers", 500, 400)
+        self.servers = [dict(s) for s in servers]  # Copy
+        self.on_save = on_save
+        
+        content = tk.Frame(self, bg=COLORS["bg_root"])
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(
+            content,
+            text="Servers in current group:",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+        
+        # Server listbox
+        list_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        list_frame.pack(fill="both", expand=True, pady=(5, 10))
+        
+        self.lb = tk.Listbox(
+            list_frame,
+            bg=COLORS["bg_input"],
+            fg=COLORS["fg_text"],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            font=("Segoe UI", 10),
+        )
+        self.lb.pack(fill="both", expand=True, side="left")
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.lb.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.lb.config(yscrollcommand=scrollbar.set)
+        
+        self._refresh_list()
+        
+        # Action buttons
+        btn_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        btn_frame.pack(fill="x", pady=(0, 10))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["success"],
+            COLORS["success_hover"],
+            text="Add",
+            width=6,
+            command=self._add_server,
+        ).pack(side="left", padx=(0, 3))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="Edit",
+            width=6,
+            command=self._edit_server,
+        ).pack(side="left", padx=(0, 3))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["danger"],
+            COLORS["danger_hover"],
+            text="Delete",
+            width=6,
+            command=self._delete_server,
+        ).pack(side="left", padx=(0, 10))
+        
+        # Move buttons
+        ModernButton(
+            btn_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="▲",
+            width=3,
+            command=self._move_up,
+        ).pack(side="left", padx=(0, 3))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="▼",
+            width=3,
+            command=self._move_down,
+        ).pack(side="left")
+        
+        # Save/Cancel
+        bottom_frame = tk.Frame(self, bg=COLORS["bg_root"])
+        bottom_frame.pack(fill="x", padx=20, pady=10, side="bottom")
+        
+        ModernButton(
+            bottom_frame,
+            COLORS["success"],
+            COLORS["success_hover"],
+            text="Save",
+            width=10,
+            command=self._save_and_close,
+        ).pack(side="right", padx=(10, 0))
+        
+        ModernButton(
+            bottom_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="Cancel",
+            width=10,
+            command=self.destroy,
+        ).pack(side="right")
+        
+        self.finalize_window(parent)
+    
+    def _refresh_list(self):
+        self.lb.delete(0, tk.END)
+        for s in self.servers:
+            self.lb.insert(tk.END, f"{s['name']} - {s['ip']}")
+    
+    def _add_server(self):
+        def on_add(data):
+            self.servers.append(data)
+            self._refresh_list()
+        AddServerDialog(self, on_add)
+    
+    def _edit_server(self):
+        sel = self.lb.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        srv = self.servers[idx]
+        
+        # Create simple Toplevel dialog (not BaseDialog to avoid grab conflicts)
+        edit_win = tk.Toplevel(self)
+        edit_win.title("Edit Server")
+        edit_win.geometry("400x180")
+        edit_win.configure(bg=COLORS["bg_root"])
+        edit_win.transient(self)
+        edit_win.resizable(False, False)
+        
+        name_var = tk.StringVar(value=srv["name"])
+        ip_var = tk.StringVar(value=srv["ip"])
+        
+        frame = tk.Frame(edit_win, bg=COLORS["bg_root"])
+        frame.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        tk.Label(frame, text="Name:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(anchor="w")
+        tk.Entry(frame, textvariable=name_var, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(fill="x", pady=(0, 10), ipady=3)
+        
+        tk.Label(frame, text="IP/Address:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(anchor="w")
+        tk.Entry(frame, textvariable=ip_var, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(fill="x", pady=(0, 10), ipady=3)
+        
+        def do_save():
+            name = name_var.get().strip()
+            ip = ip_var.get().strip()
+            if name and ip:
+                self.servers[idx] = {"name": name, "ip": ip}
+                self._refresh_list()
+                edit_win.destroy()
+        
+        btn_f = tk.Frame(frame, bg=COLORS["bg_root"])
+        btn_f.pack(fill="x", pady=5)
+        ModernButton(btn_f, COLORS["success"], COLORS["success_hover"], text="Save", width=8, command=do_save).pack(side="right", padx=5)
+        ModernButton(btn_f, COLORS["bg_panel"], COLORS["border"], text="Cancel", width=8, command=edit_win.destroy).pack(side="right")
+        
+        # Center on parent
+        edit_win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 400) // 2
+        y = self.winfo_y() + (self.winfo_height() - 180) // 2
+        edit_win.geometry(f"+{x}+{y}")
+        edit_win.focus_force()
+    
+    def _delete_server(self):
+        sel = self.lb.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        srv = self.servers[idx]
+        if messagebox.askyesno("Confirm", f"Delete server '{srv['name']}'?", parent=self):
+            del self.servers[idx]
+            self._refresh_list()
+    
+    def _move_up(self):
+        sel = self.lb.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx > 0:
+            self.servers[idx], self.servers[idx - 1] = self.servers[idx - 1], self.servers[idx]
+            self._refresh_list()
+            self.lb.selection_set(idx - 1)
+    
+    def _move_down(self):
+        sel = self.lb.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx < len(self.servers) - 1:
+            self.servers[idx], self.servers[idx + 1] = self.servers[idx + 1], self.servers[idx]
+            self._refresh_list()
+            self.lb.selection_set(idx + 1)
+    
+    def _save_and_close(self):
+        self.on_save(self.servers)
+        self.destroy()
 
 
 class RestoreBackupDialog(BaseDialog):
@@ -1069,3 +1322,196 @@ class LogMonitorDialog(BaseDialog):
 
 
 # CraftDialog removed - functionality moved to integrated craft screen in app.py
+
+class AddKeyDialog(BaseDialog):
+    def __init__(self, parent, on_save):
+        super().__init__(parent, "Add CD Key", 400, 250)
+        self.on_save = on_save
+
+        content = tk.Frame(self, bg=COLORS["bg_root"])
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+
+        self.name_var = tk.StringVar()
+        self.key_var = tk.StringVar()
+
+        tk.Label(
+            content,
+            text="Key Name (e.g. My Key 1):",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+        ).pack(anchor="w")
+        tk.Entry(
+            content,
+            textvariable=self.name_var,
+            bg=COLORS["bg_input"],
+            fg=COLORS["fg_text"],
+            relief="flat",
+        ).pack(fill="x", pady=(0, 10), ipady=3)
+
+        tk.Label(
+            content,
+            text="CD Key:",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+        ).pack(anchor="w")
+        entry = tk.Entry(
+            content,
+            textvariable=self.key_var,
+            bg=COLORS["bg_input"],
+            fg=COLORS["fg_text"],
+            relief="flat",
+        )
+        entry.pack(fill="x", pady=(0, 10), ipady=3)
+        
+        # Tooltip for format
+        hint = tk.Label(
+            content,
+            text="Format: XXXXX-XXXXX-...",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 8),
+        )
+        hint.pack(anchor="w", pady=(0, 10))
+
+
+        btn_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        btn_frame.pack(fill="x", pady=10, side="bottom")
+
+        def save():
+            name = self.name_var.get().strip()
+            key = self.key_var.get().strip().upper()
+            if name and key:
+                self.on_save({"name": name, "key": key})
+                self.destroy()
+            else:
+                messagebox.showwarning("Error", "All fields required", parent=self)
+
+        ModernButton(
+            btn_frame,
+            COLORS["success"],
+            COLORS["success_hover"],
+            text="Add",
+            width=10,
+            command=save,
+        ).pack(side="right", padx=(10, 0))
+
+        ModernButton(
+            btn_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="Cancel",
+            width=10,
+            command=self.destroy,
+        ).pack(side="right")
+
+        self.finalize_window(parent)
+
+
+class KeyManagementDialog(BaseDialog):
+    def __init__(self, parent, keys: list, on_save):
+        super().__init__(parent, "Manage CD Keys", 500, 400)
+        self.keys = [dict(k) for k in keys]  # Copy
+        self.on_save = on_save
+        
+        content = tk.Frame(self, bg=COLORS["bg_root"])
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(
+            content,
+            text="Saved CD Keys:",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+        
+        # Key listbox
+        list_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        list_frame.pack(fill="both", expand=True, pady=(5, 10))
+        
+        self.lb = tk.Listbox(
+            list_frame,
+            bg=COLORS["bg_input"],
+            fg=COLORS["fg_text"],
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            font=("Segoe UI", 10),
+        )
+        self.lb.pack(fill="both", expand=True, side="left")
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.lb.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.lb.config(yscrollcommand=scrollbar.set)
+        
+        self._refresh_list()
+        
+        # Action buttons
+        btn_frame = tk.Frame(content, bg=COLORS["bg_root"])
+        btn_frame.pack(fill="x", pady=(0, 10))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["success"],
+            COLORS["success_hover"],
+            text="Add Key",
+            width=10,
+            command=self._add_key,
+        ).pack(side="left", padx=(0, 5))
+        
+        ModernButton(
+            btn_frame,
+            COLORS["danger"],
+            COLORS["danger_hover"],
+            text="Delete",
+            width=8,
+            command=self._delete_key,
+        ).pack(side="left")
+        
+        # Save/Cancel
+        bottom_frame = tk.Frame(self, bg=COLORS["bg_root"])
+        bottom_frame.pack(fill="x", padx=20, pady=10, side="bottom")
+        
+        ModernButton(
+            bottom_frame,
+            COLORS["success"],
+            COLORS["success_hover"],
+            text="Save",
+            width=10,
+            command=self._save_and_close,
+        ).pack(side="right", padx=(10, 0))
+        
+        ModernButton(
+            bottom_frame,
+            COLORS["bg_panel"],
+            COLORS["border"],
+            text="Cancel",
+            width=10,
+            command=self.destroy,
+        ).pack(side="right")
+        
+        self.finalize_window(parent)
+    
+    def _refresh_list(self):
+        self.lb.delete(0, tk.END)
+        for k in self.keys:
+            self.lb.insert(tk.END, f"{k['name']} ({k['key'][:5]}...)")
+    
+    def _add_key(self):
+        def on_add(data):
+            self.keys.append(data)
+            self._refresh_list()
+        AddKeyDialog(self, on_add)
+    
+    def _delete_key(self):
+        sel = self.lb.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        key = self.keys[idx]
+        if messagebox.askyesno("Confirm", f"Delete key '{key['name']}'?", parent=self):
+            del self.keys[idx]
+            self._refresh_list()
+    
+    def _save_and_close(self):
+        self.on_save(self.keys)
+        self.destroy()

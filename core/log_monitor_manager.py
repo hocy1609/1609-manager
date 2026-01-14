@@ -8,6 +8,7 @@ This module handles all log monitoring operations including:
 """
 
 import time
+import threading
 import ctypes
 import ctypes.wintypes
 
@@ -62,12 +63,20 @@ class LogMonitorManager:
                 pass
         self.app.root.after(0, _update)
 
+
+
     def on_log_line(self, line: str):
-        """Callback for every new line in log - used for Open Wounds detection."""
+        """Callback for every new line in log - used for Open Wounds and Auto-Fog detection."""
         try:
-            self.app.root.after(0, lambda l=line: self._handle_open_wounds_detection(l))
+            # Check for triggers concurrently
+            self.app.root.after(0, lambda l=line: self._check_triggers(l))
         except Exception:
             pass
+
+    def _check_triggers(self, line: str):
+        """Check line against multiple triggers (Open Wounds, Auto-Fog)."""
+        self._handle_open_wounds_detection(line)
+        self._handle_auto_fog_detection(line)
 
     def ensure_log_monitor(self):
         """Create or update LogMonitor object based on current config."""
@@ -236,6 +245,7 @@ class LogMonitorManager:
         """If a log line indicates an Open Wounds hit, optionally press configured F-key.
         
         Includes a 2-second cooldown to match game ability cooldown.
+        If hit detected during cooldown, schedules delayed press for when cooldown ends.
         """
         try:
             if not line:
@@ -244,17 +254,33 @@ class LogMonitorManager:
             if "open wounds hit" in ll:
                 cfg = self.app.log_monitor_state.config.get("open_wounds", {})
                 if cfg and cfg.get("enabled"):
-                    # Check cooldown (2 seconds to match game)
+                    key = cfg.get("key", "F1")
                     current_time = time.time()
                     last_activation = getattr(self, '_last_open_wounds_activation', 0)
-                    if current_time - last_activation < 2.0:
-                        # Still on cooldown, skip key press
+                    time_since_last = current_time - last_activation
+                    
+                    if time_since_last < 2.0:
+                        # Still on cooldown - schedule delayed press for when cooldown ends
+                        remaining_cooldown = 2.0 - time_since_last
+                        delay_ms = int(remaining_cooldown * 1000) + 50  # +50ms buffer
+                        
+                        # Cancel any existing pending press
+                        pending_id = getattr(self, '_pending_open_wounds_press', None)
+                        if pending_id:
+                            try:
+                                self.app.root.after_cancel(pending_id)
+                            except Exception:
+                                pass
+                        
+                        # Schedule new pending press
+                        self._pending_open_wounds_press = self.app.root.after(
+                            delay_ms, 
+                            lambda: self._execute_pending_open_wounds(key)
+                        )
                         return
                     
-                    # Update last activation time
+                    # Cooldown is over - press immediately
                     self._last_open_wounds_activation = current_time
-                    
-                    key = cfg.get("key", "F1")
                     self._send_function_key_to_active_session(key)
                     
                     # Increment slayer hit counter
@@ -262,6 +288,160 @@ class LogMonitorManager:
                     self._update_slayer_hit_counter_ui()
         except Exception as e:
             self.app.log_error("open_wounds_detection", e)
+
+    def _handle_auto_fog_detection(self, line: str):
+        """Detect 'You are now in a Full PVP Area.' and trigger Auto-Fog command."""
+        try:
+            if not line:
+                return
+            
+            # Trigger text: "You are now in a Full PVP Area."
+            if "You are now in a Full PVP Area." in line:
+                # Deduplication: Check timestamp
+                import re
+                # Match [Sat Jan 10 02:55:15] or similar. We care about the time part.
+                # Regex for time HH:MM:SS inside brackets
+                ts_match = re.search(r'\[.*?(\d{2}:\d{2}:\d{2})\]', line)
+                current_ts = ts_match.group(1) if ts_match else None
+                
+                # If we found a timestamp, check against last processed
+                if current_ts:
+                    last_ts = getattr(self, "_last_auto_fog_ts", None)
+                    if last_ts == current_ts:
+                        print(f"[LogMonitor] Skipping duplicate Auto-Fog event at {current_ts}")
+                        return
+                    self._last_auto_fog_ts = current_ts
+
+                cfg = self.app.log_monitor_state.config.get("auto_fog", {})
+                if cfg and cfg.get("enabled"):
+                    print(f"[LogMonitor] Auto-Fog triggered at {current_ts}!")
+                    
+                    # Instant execution in thread to not block UI/monitor
+                    threading.Thread(target=lambda: self._send_console_command("mainscene.fog 0"), daemon=True).start()
+
+        except Exception as e:
+            self.app.log_error("auto_fog_detection", e)
+
+
+    def _send_console_command(self, command: str):
+        """Open console with tilde (~), type command, and press Enter.
+        Only sends if NWN window is found and can be focused.
+        """
+        try:
+            from utils.win_automation import press_key_by_name, get_keyboard_layout, set_keyboard_layout
+            import time
+            
+            print(f"[AutoFog] Starting console command: {command}")
+            
+            # 1. Find and focus game window using session PIDs
+            hwnd = self._focus_game_by_pid()
+            if not hwnd:
+                print("[AutoFog] SKIPPING - No NWN window found")
+                return
+            
+            time.sleep(0.1)
+
+            # --- Layout Management ---
+            # Check current layout
+            TRANS_DELAY_MS = 100
+            current_hkl = get_keyboard_layout(hwnd)
+            target_lang = 0x0409 # English (US)
+            layout_changed = False
+            
+            if current_hkl != target_lang:
+                print(f"[AutoFog] Layout is {hex(current_hkl)}, switching to English ({hex(target_lang)})...")
+                set_keyboard_layout(hwnd, target_lang)
+                layout_changed = True
+                time.sleep(0.15) # Wait for switch
+            
+            try:
+                # 2. Open Console with tilde (~)
+                print("[AutoFog] Pressing tilde to open console...")
+                
+                # PAUSE HOTKEYS so typing doesn't trigger them (e.g. 'E' key)
+                if hasattr(self.app, "multi_hotkey_manager"):
+                    self.app.multi_hotkey_manager.pause()
+                
+                press_key_by_name("`")
+                
+                # Wait for console to open
+                time.sleep(0.1)
+                
+                # 3. Type Command
+                print(f"[AutoFog] Typing command: {command}")
+                for char in command:
+                    if char == " ":
+                        press_key_by_name("SPACE")
+                    elif char == ".":
+                        press_key_by_name(".")
+                    else:
+                        press_key_by_name(char)
+                    time.sleep(0.01) # Very fast typing
+                
+                # 4. Press Enter (Execute)
+                time.sleep(0.05)
+                print("[AutoFog] Pressing Enter to execute...")
+                press_key_by_name("ENTER")
+                
+                print(f"[AutoFog] Command sent successfully: {command}")
+            finally:
+                # RESUME HOTKEYS
+                if hasattr(self.app, "multi_hotkey_manager"):
+                    self.app.multi_hotkey_manager.resume()
+                
+                # Restore layout
+                if layout_changed:
+                    print(f"[AutoFog] Restoring layout to {hex(current_hkl)}...")
+                    time.sleep(0.1)
+                    set_keyboard_layout(hwnd, current_hkl)
+
+            
+        except Exception as e:
+            print(f"[AutoFog] Error: {e}")
+            self.app.log_error("send_console_command", e)
+
+    def _focus_game_by_pid(self):
+        """Focus game window using session PIDs. Returns hwnd if successful, None otherwise."""
+        try:
+            sess = getattr(self.app.sessions, 'sessions', None) or {}
+            print(f"[AutoFog] Looking for game in sessions: {list(sess.keys())}")
+            
+            for k, v in sess.items():
+                try:
+                    pid = int(v)
+                    hwnd = get_hwnd_from_pid(pid)
+                    if hwnd:
+                        print(f"[AutoFog] Found NWN window: hwnd={hwnd}, pid={pid}")
+                        user32.SetForegroundWindow(hwnd)
+                        time.sleep(0.1)
+                        return hwnd
+                except Exception as e:
+                    print(f"[AutoFog] Error finding window for pid {v}: {e}")
+                    continue
+            
+            print("[AutoFog] No game window found in any session")
+            return None
+        except Exception as e:
+            print(f"[AutoFog] Error in _focus_game_by_pid: {e}")
+            return None
+
+    def _ensure_game_focused(self):
+        """Helper to focus game window."""
+        return self._focus_game_by_pid()
+
+    
+    def _execute_pending_open_wounds(self, key: str):
+        """Execute a pending Open Wounds key press after cooldown."""
+        try:
+            self._pending_open_wounds_press = None
+            self._last_open_wounds_activation = time.time()
+            self._send_function_key_to_active_session(key)
+            
+            # Increment counter for the delayed activation
+            self.app.log_monitor_state.slayer_hit_count += 1
+            self._update_slayer_hit_counter_ui()
+        except Exception as e:
+            self.app.log_error("execute_pending_open_wounds", e)
     
     def _update_slayer_hit_counter_ui(self):
         """Update slayer hit counter in UI."""
@@ -385,15 +565,20 @@ class LogMonitorManager:
         enabled = enabled_var.get()
         self.app.log_monitor_state.config["enabled"] = enabled
         self.app.log_monitor_state.config["log_path"] = self.app.log_monitor_state.log_path_var.get()
+        
+        # Filter out placeholder text when saving (including legacy placeholders)
+        webhooks_placeholders = ["https://discord.com/api/webhooks/...", "YOUR_WEBHOOK_URL_HERE"]
+        keywords_placeholders = ["Enemy Spotted, Player Killed, ...", "Enemy Spotted", "Enemy_Spotted"]
+        
         self.app.log_monitor_state.config["webhooks"] = [
             w.strip()
             for w in self.app.log_monitor_state.webhooks_text.get("1.0", "end").strip().split("\n")
-            if w.strip()
+            if w.strip() and w.strip() not in webhooks_placeholders
         ]
         self.app.log_monitor_state.config["keywords"] = [
             k.strip()
             for k in self.app.log_monitor_state.keywords_text.get("1.0", "end").strip().split("\n")
-            if k.strip()
+            if k.strip() and k.strip() not in keywords_placeholders
         ]
 
         self.app.save_data()
@@ -407,7 +592,8 @@ class LogMonitorManager:
             self.app.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
 
     def update_slayer_ui_state(self):
-        """Update slayer (Open Wounds) UI elements based on slayer state."""
+        """Update slayer (Open Wounds) and Auto-Fog UI elements."""
+
         try:
             slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
             slayer_on = slayer_cfg.get("enabled", False)
@@ -479,7 +665,7 @@ class LogMonitorManager:
             if self.app.log_monitor_state.log_path_var:
                 self.app.log_monitor_state.log_path_var.set(path)
 
-    def save_log_monitor_settings(self):
+    def save_log_monitor_settings(self, silent: bool = False):
         """Save log monitor settings."""
         from tkinter import messagebox
 
@@ -492,15 +678,20 @@ class LogMonitorManager:
                 return
             self.app.log_monitor_state.config["enabled"] = enabled_var.get()
             self.app.log_monitor_state.config["log_path"] = log_path_var.get()
+            
+            # Filter out placeholder text when saving (including legacy placeholders)
+            webhooks_placeholders = ["https://discord.com/api/webhooks/...", "YOUR_WEBHOOK_URL_HERE"]
+            keywords_placeholders = ["Enemy Spotted, Player Killed, ...", "Enemy Spotted", "Enemy_Spotted"]
+            
             self.app.log_monitor_state.config["webhooks"] = [
                 w.strip()
                 for w in webhooks_text.get("1.0", "end").strip().split("\n")
-                if w.strip()
+                if w.strip() and w.strip() not in webhooks_placeholders
             ]
             self.app.log_monitor_state.config["keywords"] = [
                 k.strip()
                 for k in keywords_text.get("1.0", "end").strip().split("\n")
-                if k.strip()
+                if k.strip() and k.strip() not in keywords_placeholders
             ]
             try:
                 self.app.log_monitor_state.config["open_wounds"] = {
@@ -509,6 +700,15 @@ class LogMonitorManager:
                 }
             except Exception:
                 self.app.log_monitor_state.config["open_wounds"] = {"enabled": False, "key": "F1"}
+            
+            # Save Auto-Fog
+            try:
+                self.app.log_monitor_state.config["auto_fog"] = {
+                    "enabled": bool(self.app.log_monitor_state.auto_fog_enabled_var.get()),
+                }
+            except Exception:
+                self.app.log_monitor_state.config["auto_fog"] = {"enabled": False}
+
             self.app.save_data()
 
             if self.app.log_monitor_state.config["enabled"]:
@@ -518,9 +718,25 @@ class LogMonitorManager:
                 self.stop_log_monitor()
                 self.app.log_monitor_status.config(text="Status: Stopped", fg=COLORS["danger"])
 
-            messagebox.showinfo("Success", "Log monitor settings saved!")
+            if not silent:
+                messagebox.showinfo("Success", "Log monitor settings saved!")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save: {e}")
+            if not silent:
+                messagebox.showerror("Error", f"Failed to save: {e}")
+            else:
+                self.app.log_error("save_log_monitor_settings", e)
+
+    def schedule_save_log_monitor_settings(self, delay_ms: int = 500):
+        """Debounced save of log monitor settings."""
+        if hasattr(self, "_lm_save_after_id") and self._lm_save_after_id:
+            try:
+                self.app.root.after_cancel(self._lm_save_after_id)
+            except Exception:
+                pass
+        self._lm_save_after_id = self.app.root.after(
+            delay_ms, 
+            lambda: (setattr(self, '_lm_save_after_id', None), self.save_log_monitor_settings(silent=True))
+        )
 
     def toggle_log_monitor_enabled(self):
         """Toggle log monitor on/off from UI."""

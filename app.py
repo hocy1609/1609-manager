@@ -38,17 +38,20 @@ from core.models import (
     Profile,
     Server,
     LogMonitorConfig,
+    HotkeysConfig,
     load_settings,
     save_settings,
 )
 from core.theme_manager import ThemeManager
 from core.log_monitor_manager import LogMonitorManager
+from core.keybind_manager import KeybindManager, MultiHotkeyManager, send_numpad_sequence_to_nwn
 from core.craft_manager import CraftManager
 from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
 from core.ui_state import UIStateManager
 from core.server_manager import ServerManager
 from core.error_handler import ErrorHandler
+from core.tray_manager import TrayManager
 from core.constants import (
     PROCESS_MONITOR_INTERVAL_MS,
     STARTUP_PATH_CHECK_DELAY_MS,
@@ -113,6 +116,9 @@ class LogMonitorState:
     keywords_text: tk.Text | None = None
     open_wounds_enabled_var: tk.BooleanVar | None = None
     open_wounds_key_var: tk.StringVar | None = None
+    # Keybind state for numpad sequence
+    keybind_enabled_var: tk.BooleanVar | None = None
+    keybind_key_var: tk.StringVar | None = None
 
 
 class NWNManagerApp:
@@ -124,19 +130,31 @@ class NWNManagerApp:
 
         self.app_dir = get_app_dir()
 
+        # Set window icon if available
+        try:
+            # Check bundle dir first (PyInstaller), then app dir
+            base_path = getattr(sys, "_MEIPASS", self.app_dir)
+            icon_path = os.path.join(base_path, "logo.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(self.app_dir, "logo.ico")
+            
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception:
+            pass
+
         # Choose a writable data directory for settings/sessions/logs.
-        # Portable-only policy: store persistent data in the program folder (`app_dir`).
-        # There is no per-user fallback — if the program directory is not writable,
-        # the app will attempt to proceed but may fail to save settings; user should
-        # run the program from a writable location or with elevated permissions.
-        self.data_dir = self.app_dir
+        # Use a dedicated subfolder "1609 settings" to keep things organized.
+        self.data_dir = os.path.join(self.app_dir, "1609 settings")
+        self.backups_dir = os.path.join(self.data_dir, "backups")
         try:
             os.makedirs(self.data_dir, exist_ok=True)
+            os.makedirs(self.backups_dir, exist_ok=True)
         except Exception:
             try:
                 messagebox.showwarning(
                     "Permissions",
-                    f"Cannot write to application directory:\n{self.data_dir}\n\nPlease move the program to a writable folder or run it with elevated permissions.",
+                    f"Cannot write to settings directory:\n{self.data_dir}\n\nPlease move the program to a writable folder or run it with elevated permissions.",
                     parent=self.root,
                 )
             except Exception:
@@ -145,6 +163,9 @@ class NWNManagerApp:
         self.settings_path = os.path.join(self.data_dir, SETTINGS_FILE)
         self.sessions_path = os.path.join(self.data_dir, SESSIONS_FILE)
         self.log_path = get_default_log_path(self.data_dir)
+
+        # Migration: move existing files from old location (app_dir) to new location (data_dir)
+        self._migrate_old_settings()
 
         # If there's a default settings file bundled (ONEDIR: next to exe; ONEFILE: inside _MEIPASS),
         # copy it to the writable data dir on first run for sensible defaults.
@@ -179,10 +200,15 @@ class NWNManagerApp:
         except Exception:
             logging.exception("Unhandled exception")
 
-        self.sessions = SessionManager(self.sessions_path)
+        # Initialize sessions with app reference (sessions stored in settings)
+        self.sessions = SessionManager(self)
+        self._settings_sessions = {}  # Will be populated by load_data
 
         self.log_monitor_manager = LogMonitorManager(self)
         self.log_monitor_manager.initialize_state()
+
+        self.keybind_manager = KeybindManager(self)
+        self.multi_hotkey_manager = MultiHotkeyManager(self)
 
         self.craft_manager = CraftManager(self)
         self.craft_manager.initialize_state()
@@ -190,15 +216,46 @@ class NWNManagerApp:
         self.profile_manager = ProfileManager(self)
         self.settings_manager = SettingsManager(self)
         self.server_manager = ServerManager(self)
+        
+        # System tray manager
+        self.tray_manager = TrayManager(self)
+        self.tray_manager.setup(
+            on_show=lambda icon, item: self.root.after(0, self.tray_manager.restore_from_tray),
+            on_quit=lambda icon, item: self.root.after(0, self.force_quit)
+        )
 
         self.setup_styles()
         self.load_data()
+        
+        # Initialize sessions from loaded settings
+        self.sessions.init_from_settings(self._settings_sessions)
 
         # Initialize theme manager after load_data (needs self.theme)
         self.theme_manager = ThemeManager(self)
 
         self.create_ui()
         self.refresh_list()
+        
+        # Auto-select first profile if none selected and list not empty
+        def _initial_select():
+            try:
+                if not self.current_profile and self.view_map:
+                    # Check if view_map[0] is a profile (skip group headers if any)
+                    first_idx = 0
+                    for idx, item in enumerate(self.view_map):
+                        if item.get("type") == "profile":
+                            first_idx = idx
+                            break
+                    
+                    self.lb.focus_set()
+                    self.lb.selection_set(first_idx)
+                    self.lb.activate(first_idx)
+                    self.on_select(None)
+            except Exception:
+                pass
+        
+        self.root.after(200, _initial_select)
+
         self.sessions.cleanup_dead()
         # Try to detect a game already started outside the manager
         try:
@@ -216,6 +273,9 @@ class NWNManagerApp:
 
         self.root.after(STARTUP_PATH_CHECK_DELAY_MS, self.check_paths_silent)
         self.root.after(APPWINDOW_SETUP_DELAY_MS, self.set_appwindow)
+        
+        # Auto-register hotkeys if enabled in settings
+        self.root.after(500, self._apply_saved_hotkeys)
 
     @property
     def nav_buttons(self):
@@ -306,8 +366,100 @@ class NWNManagerApp:
             self.ui_state_manager.minimize_window()
 
     def close_app_window(self):
+        # Minimize to tray instead of closing
+        if hasattr(self, 'tray_manager') and self.tray_manager.is_available():
+            if self.tray_manager.minimize_to_tray():
+                return
+        # Fallback: actually close
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.close_app_window()
+    
+    def force_quit(self):
+        """Force quit the application (from tray menu)."""
+        if hasattr(self, 'tray_manager'):
+            self.tray_manager.stop()
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager.close_app_window()
+
+    # === МИГРАЦИЯ И БЭКАПЫ ===
+
+    def _migrate_old_settings(self):
+        """Migrate settings files from old location (app_dir) to new location (data_dir/1609 settings)."""
+        try:
+            old_settings = os.path.join(self.app_dir, SETTINGS_FILE)
+            old_sessions = os.path.join(self.app_dir, SESSIONS_FILE)
+            old_log = os.path.join(self.app_dir, LOG_FILENAME)
+            
+            # Migrate settings
+            if os.path.exists(old_settings) and not os.path.exists(self.settings_path):
+                try:
+                    shutil.move(old_settings, self.settings_path)
+                    logging.info(f"Migrated {SETTINGS_FILE} to new location")
+                except Exception as e:
+                    logging.exception(f"Failed to migrate {SETTINGS_FILE}")
+            
+            # Migrate sessions
+            if os.path.exists(old_sessions) and not os.path.exists(self.sessions_path):
+                try:
+                    shutil.move(old_sessions, self.sessions_path)
+                    logging.info(f"Migrated {SESSIONS_FILE} to new location")
+                except Exception as e:
+                    logging.exception(f"Failed to migrate {SESSIONS_FILE}")
+            
+            # Migrate log (copy instead of move - log file may be in use)
+            if os.path.exists(old_log) and not os.path.exists(self.log_path):
+                try:
+                    shutil.copy2(old_log, self.log_path)
+                    logging.info(f"Copied {LOG_FILENAME} to new location")
+                except PermissionError:
+                    pass  # Log file in use, skip silently
+                except Exception as e:
+                    pass  # Non-critical, skip
+        except Exception as e:
+            logging.exception("Error during settings migration")
+
+    def _backup_settings(self):
+        """Create a timestamped backup of nwn_settings.json in the backups folder."""
+        try:
+            if not os.path.exists(self.settings_path):
+                return  # Nothing to backup
+            
+            # Only backup once per minute to avoid excessive backups
+            last_backup_time = getattr(self, '_last_backup_time', 0)
+            current_time = time.time()
+            if current_time - last_backup_time < 60:
+                return  # Skip backup if less than 1 minute since last
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"nwn_settings_{timestamp}.json"
+            backup_path = os.path.join(self.backups_dir, backup_name)
+            
+            shutil.copy2(self.settings_path, backup_path)
+            self._last_backup_time = current_time
+            
+            # Cleanup old backups (keep only last 10)
+            self._cleanup_old_backups()
+        except Exception as e:
+            logging.exception("Failed to create settings backup")
+
+    def _cleanup_old_backups(self, max_backups: int = 10):
+        """Remove old backups keeping only the most recent ones."""
+        try:
+            backup_files = [
+                os.path.join(self.backups_dir, f)
+                for f in os.listdir(self.backups_dir)
+                if f.startswith("nwn_settings_") and f.endswith(".json")
+            ]
+            backup_files.sort(key=os.path.getmtime, reverse=True)
+            
+            # Remove excess backups
+            for old_backup in backup_files[max_backups:]:
+                try:
+                    os.remove(old_backup)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # === ЗАГРУЗКА / СОХРАНЕНИЕ ===
 
@@ -328,15 +480,22 @@ class NWNManagerApp:
             self.log_error("load_settings", e)
             settings = Settings.defaults(default_docs, default_exe)
 
-        if not settings.servers:
-            settings.servers = [
-                Server(name="Siala Main (play.siala.online)", ip="play.siala.online"),
-                Server(name="Siala Test (91.202.25.110:5122)", ip="91.202.25.110:5122"),
-            ]
-
+        # Load server groups
+        self.server_group = settings.server_group
+        self.server_groups = settings.server_groups
+        
+        # Set servers from current group
+        if self.server_group in self.server_groups:
+            self.servers = self.server_groups[self.server_group]
+        else:
+            self.servers = self.server_groups.get("siala", [])
+        
         self.profiles = [p.to_dict() for p in settings.profiles]
-        self.servers = [s.to_dict() for s in settings.servers]
-        self.doc_path_var.set(settings.doc_path)
+        # Fix doc_path if it contains USER placeholder
+        doc_path = settings.doc_path
+        if "USER" in doc_path or not os.path.exists(doc_path):
+            doc_path = default_docs
+        self.doc_path_var.set(doc_path)
         self.exe_path_var.set(settings.exe_path if os.path.exists(settings.exe_path) else default_exe)
         self.use_server_var.set(settings.auto_connect)
 
@@ -373,12 +532,39 @@ class NWNManagerApp:
         except Exception:
             logging.exception("Unhandled exception")
 
-        lm_default_path = os.path.join(settings.doc_path, "logs", "nwclientLog1.txt")
+        # Log monitor path should always use real user's Documents folder
+        real_docs_path = os.path.join(os.path.expanduser("~"), "Documents", "Neverwinter Nights")
+        lm_default_path = os.path.join(real_docs_path, "logs", "nwclientLog1.txt")
         lm_cfg = settings.log_monitor
-        if lm_cfg.log_path == "":
+        if lm_cfg.log_path == "" or "USER" in lm_cfg.log_path:
             lm_cfg.log_path = lm_default_path
         self.log_monitor_state.config = lm_cfg.to_dict()
         self.log_monitor_state.config.setdefault("open_wounds", {"enabled": False, "key": "F1"})
+        self.log_monitor_state.config.setdefault("keybind", {"enabled": False, "key": "F10"})
+
+        # Load hotkeys config from top-level settings
+        self.hotkeys_config = settings.hotkeys.to_dict()
+        
+        # Load sessions from settings
+        self._settings_sessions = dict(settings.sessions)
+        
+        # Load saved CD keys
+        self.saved_keys = list(settings.saved_keys)
+        
+        # Auto-import key from cdkey.ini if no saved keys exist
+        if not self.saved_keys:
+            cdkey_path = os.path.join(doc_path, "nwncdkey.ini")
+            if os.path.exists(cdkey_path):
+                try:
+                    with open(cdkey_path, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            if line.strip().startswith("Key1="):
+                                key_value = line.strip().split("=", 1)[1].strip()
+                                if key_value and len(key_value) > 10:
+                                    self.saved_keys.append({"name": "Main Key", "key": key_value})
+                                break
+                except Exception:
+                    pass
 
         if not os.path.exists(self.settings_path):
             try:
@@ -388,9 +574,20 @@ class NWNManagerApp:
 
     def save_data(self):
         try:
+            # Create backup of existing settings before saving
+            self._backup_settings()
+            
             servers = [Server.from_dict(s) if isinstance(s, dict) else s for s in self.servers]
             profiles = [Profile.from_dict(p) if isinstance(p, dict) else p for p in self.profiles]
             lm_cfg = LogMonitorConfig.from_dict(self.log_monitor_state.config or {})
+            hotkeys_cfg = HotkeysConfig.from_dict(getattr(self, "hotkeys_config", {}))
+            # Get current sessions from SessionManager
+            sessions_data = self.sessions.sessions if hasattr(self, 'sessions') else {}
+            
+            # Update current group's servers before saving
+            if hasattr(self, 'server_groups') and hasattr(self, 'server_group'):
+                self.server_groups[self.server_group] = self.servers
+            
             settings = Settings(
                 doc_path=self.doc_path_var.get(),
                 exe_path=self.exe_path_var.get(),
@@ -403,12 +600,17 @@ class NWNManagerApp:
                 confirm_coords_x=self.confirm_x,
                 confirm_coords_y=self.confirm_y,
                 log_monitor=lm_cfg,
+                hotkeys=hotkeys_cfg,
+                sessions=sessions_data,
                 exit_speed=getattr(self, "exit_speed", 0.1),
                 esc_count=getattr(self, "esc_count", 1),
                 clip_margin=getattr(self, "clip_margin", 48),
                 show_tooltips=getattr(self, "show_tooltips", True),
                 theme=getattr(self, "theme", "dark"),
                 favorite_potions=list(getattr(self, "favorite_potions", set())),
+                server_group=getattr(self, "server_group", "siala"),
+                server_groups=getattr(self, "server_groups", {}),
+                saved_keys=getattr(self, "saved_keys", []),
             )
             save_settings(self.settings_path, settings)
         except Exception as e:
@@ -654,6 +856,94 @@ class NWNManagerApp:
             except Exception:
                 logging.exception("Unhandled exception")
 
+    def export_accounts_txt(self):
+        """Export account profiles to a simple accounts.txt file for easy sharing."""
+        try:
+            accounts_path = os.path.join(self.data_dir, "accounts.txt")
+            
+            with open(accounts_path, "w", encoding="utf-8") as f:
+                f.write("# 1609 Manager Accounts Export\n")
+                f.write("# Format: PlayerName|CDKey\n")
+                f.write("# ---\n")
+                
+                for profile in self.profiles:
+                    name = profile.get("playerName", "")
+                    cdkey = profile.get("cdKey", "")
+                    if name and cdkey:
+                        f.write(f"{name}|{cdkey}\n")
+            
+            messagebox.showinfo(
+                "Export Complete",
+                f"Accounts exported to:\n{accounts_path}\n\nTotal: {len(self.profiles)} profiles",
+                parent=self.root,
+            )
+        except Exception as e:
+            self.log_error("export_accounts_txt", e)
+            messagebox.showerror("Export Error", str(e), parent=self.root)
+
+    def import_accounts_txt(self):
+        """Import accounts from accounts.txt file."""
+        try:
+            accounts_path = os.path.join(self.data_dir, "accounts.txt")
+            
+            if not os.path.exists(accounts_path):
+                # Ask user to select file
+                accounts_path = filedialog.askopenfilename(
+                    title="Select accounts.txt",
+                    filetypes=[("Text Files", "*.txt"), ("All Files", "*")],
+                    initialdir=self.data_dir,
+                    parent=self.root,
+                )
+                if not accounts_path:
+                    return
+            
+            with open(accounts_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            
+            existing_keys = {(p.get("playerName"), p.get("cdKey")) for p in self.profiles}
+            added = 0
+            
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                
+                parts = line.split("|", 1)
+                if len(parts) != 2:
+                    continue
+                
+                name, cdkey = parts[0].strip(), parts[1].strip()
+                if not name or not cdkey:
+                    continue
+                
+                key_tuple = (name, cdkey)
+                if key_tuple in existing_keys:
+                    continue
+                
+                profile = {
+                    "name": name,
+                    "playerName": name,
+                    "cdKey": cdkey,
+                    "category": "Imported",
+                    "launchArgs": "",
+                }
+                self.profiles.append(profile)
+                existing_keys.add(key_tuple)
+                added += 1
+            
+            if added > 0:
+                self.save_data()
+                self.refresh_list()
+            
+            messagebox.showinfo(
+                "Import Complete",
+                f"Imported {added} new accounts",
+                parent=self.root,
+            )
+        except Exception as e:
+            self.log_error("import_accounts_txt", e)
+            messagebox.showerror("Import Error", str(e), parent=self.root)
+
     def open_settings(self):
         """Delegate to SettingsManager."""
         if hasattr(self, 'settings_manager'):
@@ -673,13 +963,28 @@ class NWNManagerApp:
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+            # 1. Backup Game Configs (from Doc Path)
             for fname in ["nwncdkey.ini", "settings.tml"]:
                 src = os.path.join(doc_path, fname)
                 if os.path.exists(src):
                     dst = os.path.join(backup_dir, f"{fname}_{timestamp}.bak")
                     shutil.copy2(src, dst)
 
-            for file_type in ["nwncdkey.ini", "settings.tml"]:
+            # 2. Backup Manager Configs (from Data Dir)
+            # self.settings_path -> nwn_settings.json
+            # self.sessions_path -> nwn_sessions.json
+            manager_files = [
+                (self.settings_path, "nwn_settings.json"),
+                (self.sessions_path, "nwn_sessions.json")
+            ]
+            for src_path, fname in manager_files:
+                if os.path.exists(src_path):
+                    dst = os.path.join(backup_dir, f"{fname}_{timestamp}.bak")
+                    shutil.copy2(src_path, dst)
+
+            # Cleanup old backups
+            all_types = ["nwncdkey.ini", "settings.tml", "nwn_settings.json", "nwn_sessions.json"]
+            for file_type in all_types:
                 type_files = [
                     os.path.join(backup_dir, f)
                     for f in os.listdir(backup_dir)
@@ -793,6 +1098,73 @@ class NWNManagerApp:
             messagebox.showinfo("Test", f"Sent {key} to active session (if any).", parent=self.root)
         except Exception as e:
             self.log_error("test_open_wounds", e)
+
+    def _apply_saved_hotkeys(self):
+        """Auto-register hotkeys from saved config on app startup."""
+        try:
+            print("[DEBUG] _apply_saved_hotkeys called")
+            hotkeys_cfg = getattr(self, 'hotkeys_config', {})
+            print(f"[DEBUG] hotkeys_config: {hotkeys_cfg}")
+            
+            if not hotkeys_cfg.get("enabled", False):
+                print("[DEBUG] Hotkeys not enabled, skipping")
+                return
+            
+            binds = hotkeys_cfg.get("binds", [])
+            print(f"[DEBUG] Binds count: {len(binds)}")
+            if not binds:
+                print("[DEBUG] No binds, skipping")
+                return
+            
+            from core.keybind_manager import HotkeyAction
+            actions = [HotkeyAction.from_dict(b) for b in binds if b.get("enabled", True)]
+            print(f"[DEBUG] Actions to register: {len(actions)}")
+            if actions:
+                count = self.multi_hotkey_manager.register_hotkeys(actions)
+                print(f"[DEBUG] Registered {count} hotkeys")
+                logging.info(f"Auto-registered {count} hotkeys on startup")
+        except Exception as e:
+            print(f"[DEBUG] Error in _apply_saved_hotkeys: {e}")
+            self.log_error("_apply_saved_hotkeys", e)
+
+    def _on_sessions_started(self):
+        """Called when game sessions appear (went from 0 to >0).
+        Auto-enables log monitor, hotkeys, and auto-fog.
+        """
+        try:
+            print("[Auto] Enabling log monitor...")
+            # Start log monitor
+            if hasattr(self, 'log_monitor_manager'):
+                self.log_monitor_state.config["enabled"] = True
+                self.log_monitor_manager.start_log_monitor()
+            
+            # Apply saved hotkeys
+            print("[Auto] Applying saved hotkeys...")
+            self._apply_saved_hotkeys()
+            
+        except Exception as e:
+            self.log_error("_on_sessions_started", e)
+
+    def _on_sessions_ended(self):
+        """Called when all game sessions end (went from >0 to 0).
+        Auto-disables log monitor, hotkeys, and unregisters them.
+        """
+        try:
+            print("[Auto] Disabling log monitor...")
+            # Stop log monitor
+            if hasattr(self, 'log_monitor_manager'):
+                if self.log_monitor_state.monitor and self.log_monitor_state.monitor.is_running():
+                    self.log_monitor_manager.stop_log_monitor()
+                self.log_monitor_state.config["enabled"] = False
+            
+            # Unregister hotkeys
+            print("[Auto] Unregistering hotkeys...")
+            if hasattr(self, 'multi_hotkey_manager'):
+                self.multi_hotkey_manager.unregister_all()
+            
+            self.save_data()
+        except Exception as e:
+            self.log_error("_on_sessions_ended", e)
 
     def toggle_log_monitor_enabled(self):
         """Toggle log monitor. Delegates to LogMonitorManager."""
@@ -1233,27 +1605,22 @@ class NWNManagerApp:
         self.sessions.cleanup_dead()
         # Only refresh list if session count changed (avoid constant redraws)
         current_count = len(self.sessions.sessions) if hasattr(self.sessions, "sessions") else 0
-        if current_count != self._last_session_count:
+        previous_count = getattr(self, "_last_session_count", 0)
+        
+        if current_count != previous_count:
             self._last_session_count = current_count
             self.refresh_list()
-            # If no sessions remain but log monitor is enabled/running, stop it and persist
-            try:
-                has_sessions = bool(getattr(self.sessions, "sessions", None))
-                if not has_sessions:
-                    # If monitor object exists and is running, stop it
-                    if self.log_monitor_state.monitor and self.log_monitor_state.monitor.is_running():
-                        try:
-                            self.stop_log_monitor()
-                        except Exception:
-                            logging.exception("Unhandled exception")
-                    # Ensure config reflects disabled state
-                    try:
-                        self.log_monitor_state.config["enabled"] = False
-                        self.save_data()
-                    except Exception:
-                        logging.exception("Unhandled exception")
-            except Exception:
-                logging.exception("Unhandled exception")
+            
+            # Sessions appeared (went from 0 to >0) - auto-enable features
+            if current_count > 0 and previous_count == 0:
+                print(f"[Monitor] Game session started! Auto-enabling features...")
+                self._on_sessions_started()
+            
+            # No sessions remain - auto-disable features
+            if current_count == 0 and previous_count > 0:
+                print(f"[Monitor] All sessions ended. Auto-disabling features...")
+                self._on_sessions_ended()
+                
         # Очистка контролирующих профилей для ключей, которые больше не активны
         try:
             inactive = [k for k in self.controller_profile_by_cdkey.keys() if k not in self.sessions.sessions]
@@ -1584,7 +1951,7 @@ class NWNManagerApp:
         cmd = [exe]
 
         if self.use_server_var.get():
-            srv_val = self.cb_server.get().strip()
+            srv_val = self.server_var.get().strip()
             srv_ip = next(
                 (s["ip"] for s in self.servers if s["name"] == srv_val),
                 srv_val,
@@ -1671,7 +2038,10 @@ class NWNManagerApp:
 
 if __name__ == "__main__":
     app_dir = get_app_dir()
-    log_path = get_default_log_path(app_dir)
+    # Use '1609 settings' subfolder for all data files including logs
+    data_dir = os.path.join(app_dir, "1609 settings")
+    os.makedirs(data_dir, exist_ok=True)
+    log_path = get_default_log_path(data_dir)
     configure_logging(log_path)
     # For PyInstaller onefile builds: ensure our CWD is not the temporary
     # extraction directory (_MEIxxxx). Keeping CWD inside that folder can

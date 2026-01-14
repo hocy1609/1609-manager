@@ -38,10 +38,14 @@ SW_MINIMIZE = 6
 
 KEYEVENTF_SCANCODE = 0x0008
 
+
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_INPUTLANGCHANGEREQUEST = 0x0050
 MK_LBUTTON = 0x0001
+HKL_NEXT = 1
+
 
 GWL_EXSTYLE = -20
 WS_EX_APPWINDOW = 0x00040000
@@ -590,18 +594,117 @@ def robust_update_settings_tml(path: str, new_player_name: str) -> None:
 # === KEYBOARD MAPPING & GENERIC PRESS ===
 
 VK_MAP = {
+    # Number keys
     "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34,
     "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+    # Letter keys
     "A": 0x41, "B": 0x42, "C": 0x43, "D": 0x44, "E": 0x45,
     "F": 0x46, "G": 0x47, "H": 0x48, "I": 0x49, "J": 0x4A,
     "K": 0x4B, "L": 0x4C, "M": 0x4D, "N": 0x4E, "O": 0x4F,
     "P": 0x50, "Q": 0x51, "R": 0x52, "S": 0x53, "T": 0x54,
     "U": 0x55, "V": 0x56, "W": 0x57, "X": 0x58, "Y": 0x59, "Z": 0x5A,
+    # Function keys
     "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74,
     "F6": 0x75, "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79,
     "F11": 0x7A, "F12": 0x7B,
-    "SPACE": 0x20, "ENTER": 0x0D, "TAB": 0x09, "ESCAPE": 0x1B
+    # Special keys
+    "SPACE": 0x20, "ENTER": 0x0D, "TAB": 0x09, "ESCAPE": 0x1B,
+    "BACKSPACE": 0x08, "DELETE": 0x2E, "INSERT": 0x2D,
+    "HOME": 0x24, "END": 0x23, "PAGEUP": 0x21, "PAGEDOWN": 0x22,
+    "UP": 0x26, "DOWN": 0x28, "LEFT": 0x25, "RIGHT": 0x27,
+    # Modifier keys
+    "CTRL": 0x11, "CONTROL": 0x11, "SHIFT": 0x10, "ALT": 0x12, "MENU": 0x12,
+    "LCTRL": 0xA2, "RCTRL": 0xA3, "LSHIFT": 0xA0, "RSHIFT": 0xA1,
+    "LALT": 0xA4, "RALT": 0xA5,
+    # Numpad keys
+    "NUMPAD0": 0x60, "NUMPAD1": 0x61, "NUMPAD2": 0x62, "NUMPAD3": 0x63,
+    "NUMPAD4": 0x64, "NUMPAD5": 0x65, "NUMPAD6": 0x66, "NUMPAD7": 0x67,
+    "NUMPAD8": 0x68, "NUMPAD9": 0x69,
+    # Symbols
+    "MINUS": 0xBD, "-": 0xBD, "PLUS": 0xBB, "=": 0xBB,
+    "COMMA": 0xBC, ",": 0xBC, "PERIOD": 0xBE, ".": 0xBE,
+    "SEMICOLON": 0xBA, ";": 0xBA, "SLASH": 0xBF, "/": 0xBF,
+    "TILDE": 0xC0, "`": 0xC0, "~": 0xC0,
+    "LBRACKET": 0xDB, "[": 0xDB, "RBRACKET": 0xDD, "]": 0xDD,
+    "BACKSLASH": 0xDC, "\\": 0xDC, "QUOTE": 0xDE, "'": 0xDE,
 }
+
+# Mouse button constants
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+
+
+def right_click():
+    """Выполняет правый клик мыши."""
+    try:
+        user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+        user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+    except Exception as e:
+        print(f"[RightClick] Error: {e}")
+
+
+def press_key_with_modifiers(key_name: str, ctrl: bool = False, shift: bool = False, alt: bool = False):
+    """Нажимает клавишу с модификаторами (Ctrl, Shift, Alt).
+    
+    Args:
+        key_name: Имя клавиши (например, 'F4', 'A')
+        ctrl: Зажать Ctrl
+        shift: Зажать Shift
+        alt: Зажать Alt
+    """
+    key_upper = key_name.upper()
+    vk = VK_MAP.get(key_upper)
+    
+    if not vk:
+        try:
+            res = user32.VkKeyScanW(ord(key_upper[0]))
+            if res != -1:
+                vk = res & 0xFF
+        except Exception:
+            pass
+    
+    if not vk:
+        return
+    
+    try:
+        # Press modifiers
+        if ctrl:
+            user32.keybd_event(0x11, 0, 0, 0)
+        if shift:
+            user32.keybd_event(0x10, 0, 0, 0)
+        if alt:
+            user32.keybd_event(0x12, 0, 0, 0)
+        
+        time.sleep(0.02)
+        
+        # Press key
+        scan = user32.MapVirtualKeyW(vk, 0)
+        user32.keybd_event(vk, scan, 0, 0)
+        time.sleep(0.05)
+        user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)
+        
+        time.sleep(0.02)
+        
+        # Release modifiers
+        if alt:
+            user32.keybd_event(0x12, 0, KEYEVENTF_KEYUP, 0)
+        if shift:
+            user32.keybd_event(0x10, 0, KEYEVENTF_KEYUP, 0)
+        if ctrl:
+            user32.keybd_event(0x11, 0, KEYEVENTF_KEYUP, 0)
+    except Exception as e:
+        print(f"[KeyWithModifiers] Error: {e}")
+
+
+def right_click_and_send_sequence(keys: list, delay: float = 0.05):
+    """Выполняет правый клик и затем отправляет последовательность клавиш.
+    
+    Args:
+        keys: Список имен клавиш
+        delay: Задержка между нажатиями
+    """
+    right_click()
+    press_key_sequence(keys, delay)
 
 def press_key_by_name(key_name: str):
     """Нажимает клавишу по её строковому имени (например, 'F10', '4', 'R')."""
@@ -622,10 +725,21 @@ def press_key_by_name(key_name: str):
         try:
             scan = user32.MapVirtualKeyW(vk, 0)
             user32.keybd_event(vk, scan, 0, 0)  # Down
-            time.sleep(0.05)
             user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)  # Up
         except Exception:
             pass
+
+
+def press_key_sequence(keys: list, delay: float = 0.01):
+    """Нажимает последовательность клавиш с задержкой между ними.
+    
+    Args:
+        keys: Список имен клавиш (например, ['NUMPAD0', 'NUMPAD3', 'NUMPAD2'])
+        delay: Задержка между нажатиями в секундах
+    """
+    for key in keys:
+        press_key_by_name(key)
+        time.sleep(delay)
 
 
 def focus_nwn_window(delay: float = 0):
@@ -688,6 +802,30 @@ def drag_mouse(from_x: int, from_y: int, to_x: int, to_y: int, duration: float =
         
     except Exception as e:
         print(f"[Drag] Error: {e}")
+
+
+def get_keyboard_layout(hwnd: int) -> int:
+    """Returns the keyboard layout identifier (HKL) for the thread of the given window."""
+    try:
+        tid = user32.GetWindowThreadProcessId(hwnd, None)
+        hkl = user32.GetKeyboardLayout(tid)
+        return hkl & 0xFFFF  # Return only the language ID (low word)
+    except Exception:
+        return 0
+
+def set_keyboard_layout(hwnd: int, lang_id: int):
+    """Requests a keyboard layout switch for the given window (e.g., 0x0409 for English)."""
+    try:
+        # Load the keyboard layout first to ensure it's available
+        # string format "00000409"
+        hkl_str = f"{lang_id:08x}"
+        hkl = user32.LoadKeyboardLayoutW(hkl_str, 1) # 1 = KLF_ACTIVATE
+        
+        # Send message to switch
+        user32.PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, hkl)
+    except Exception as e:
+        print(f"[SetLayout] Error: {e}")
+
 
 
 # === MACRO RECORDING ===

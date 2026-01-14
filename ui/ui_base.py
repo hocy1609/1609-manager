@@ -275,6 +275,48 @@ class TitleBarButton(tk.Button):
             pass
 
 
+class CenterPopup(tk.Toplevel):
+    """
+    A Toplevel window that automatically centers itself relative to the parent window.
+    """
+    def __init__(self, parent, title="Popup", width=400, height=300):
+        super().__init__(parent)
+        self.title(title)
+        self.configure(bg=COLORS["bg_root"])
+        
+        # Center relative to parent
+        self.withdraw() # Hide initially
+        self.update_idletasks() # Calculate sizes
+        
+        # If parent is root or has geometry, use it
+        try:
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            
+            x = px + (pw - width) // 2
+            y = py + (ph - height) // 2
+            
+            # Ensure not off-screen
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            x = max(0, min(x, sw - width))
+            y = max(0, min(y, sh - height))
+            
+            self.geometry(f"{width}x{height}+{x}+{y}")
+        except Exception:
+            # Fallback to screen center
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            self.geometry(f"{width}x{height}+{(sw-width)//2}+{(sh-height)//2}")
+            
+        self.deiconify() # Show
+        self.transient(parent)
+        self.grab_set()
+        self.focus_set()
+
+
 class BaseDialog(tk.Toplevel):
     def __init__(self, parent, title: str, w: int, h: int):
         super().__init__(parent)
@@ -363,9 +405,18 @@ class ToggleSwitch(tk.Frame):
 
     def _draw(self):
         """Redraw the toggle switch"""
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+
         self._drawing = True
         try:
-            self.canvas.delete("all")
+            try:
+                self.canvas.delete("all")
+            except tk.TclError:
+                return
             
             radius = (self._height - 2 * self._padding) // 2
             is_on = bool(self.var.get())
@@ -426,6 +477,137 @@ class ToggleSwitch(tk.Frame):
 
     def set(self, value: bool):
         self.var.set(bool(value))
+
+
+class SectionFrame(tk.LabelFrame):
+    """Styled LabelFrame with accent border for visual grouping."""
+    
+    def __init__(self, master, text: str = "", accent: bool = False, **kwargs):
+        # Default styling
+        bg = kwargs.pop("bg", COLORS.get("bg_root"))
+        fg = kwargs.pop("fg", COLORS.get("fg_dim"))
+        
+        super().__init__(
+            master,
+            text=f" {text} " if text else "",
+            bg=bg,
+            fg=fg,
+            font=("Segoe UI", 10, "bold"),
+            bd=1,
+            relief="solid",
+            **kwargs
+        )
+        
+        self._accent = accent
+        if accent:
+            self.configure(
+                highlightbackground=COLORS.get("accent"),
+                highlightcolor=COLORS.get("accent"),
+                highlightthickness=2
+            )
+        else:
+            self.configure(
+                highlightbackground=COLORS.get("border"),
+                highlightcolor=COLORS.get("border"),
+                highlightthickness=1
+            )
+    
+    def set_accent(self, accent: bool):
+        """Toggle accent border."""
+        self._accent = accent
+        if accent:
+            self.configure(
+                fg=COLORS.get("accent"),
+                highlightbackground=COLORS.get("accent"),
+                highlightcolor=COLORS.get("accent"),
+                highlightthickness=2
+            )
+        else:
+            self.configure(
+                fg=COLORS.get("fg_dim"),
+                highlightbackground=COLORS.get("border"),
+                highlightcolor=COLORS.get("border"),
+                highlightthickness=1
+            )
+
+
+class Separator(tk.Frame):
+    """Visual separator line (horizontal or vertical)."""
+    
+    def __init__(self, master, orient: str = "horizontal", color: str = None, thickness: int = 1, padding: int = 10, **kwargs):
+        bg_color = color or COLORS.get("border")
+        super().__init__(master, bg=bg_color, **kwargs)
+        
+        self._orient = orient
+        self._thickness = thickness
+        self._padding = padding
+        
+        if orient == "horizontal":
+            self.configure(height=thickness)
+        else:
+            self.configure(width=thickness)
+    
+    def pack(self, **kwargs):
+        if self._orient == "horizontal":
+            kwargs.setdefault("fill", "x")
+            kwargs.setdefault("pady", self._padding)
+        else:
+            kwargs.setdefault("fill", "y")
+            kwargs.setdefault("padx", self._padding)
+        super().pack(**kwargs)
+    
+    def grid(self, **kwargs):
+        if self._orient == "horizontal":
+            kwargs.setdefault("sticky", "ew")
+            kwargs.setdefault("pady", self._padding)
+        else:
+            kwargs.setdefault("sticky", "ns")
+            kwargs.setdefault("padx", self._padding)
+        super().grid(**kwargs)
+
+
+class SectionHeader(tk.Frame):
+    """Header with text and underline accent."""
+    
+    def __init__(self, master, text: str, **kwargs):
+        bg = kwargs.pop("bg", COLORS.get("bg_root"))
+        super().__init__(master, bg=bg, **kwargs)
+        
+        self.label = tk.Label(
+            self,
+            text=text,
+            bg=bg,
+            fg=COLORS.get("fg_text"),
+            font=("Segoe UI", 12, "bold")
+        )
+        self.label.pack(anchor="w")
+        
+        self.underline = tk.Frame(
+            self,
+            bg=COLORS.get("accent"),
+            height=2
+        )
+        self.underline.pack(fill="x", pady=(5, 0))
+
+
+class CategoryIndicator(tk.Frame):
+    """Colored indicator bar for category items."""
+    
+    def __init__(self, master, color: str = None, width: int = 4, **kwargs):
+        super().__init__(master, **kwargs)
+        
+        self.indicator = tk.Frame(
+            self,
+            bg=color or COLORS.get("accent"),
+            width=width
+        )
+        self.indicator.pack(side="left", fill="y")
+        
+        self.content = tk.Frame(self, bg=self.cget("bg"))
+        self.content.pack(side="left", fill="both", expand=True)
+    
+    def set_color(self, color: str):
+        self.indicator.configure(bg=color)
 
 
 def set_tooltips_enabled(enabled: bool):

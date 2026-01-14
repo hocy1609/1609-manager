@@ -15,8 +15,29 @@ from ui.dialogs import AddServerDialog
 class ServerManager:
     """Manages servers and server status checks."""
 
+    PING_INTERVAL_MS = 60000  # 60 seconds
+
     def __init__(self, app):
         self.app = app
+        self._auto_ping_job = None
+
+    def start_auto_ping(self):
+        """Start automatic ping refresh every 60 seconds."""
+        self._schedule_next_ping()
+
+    def _schedule_next_ping(self):
+        """Schedule the next ping check."""
+        if self._auto_ping_job:
+            try:
+                self.app.root.after_cancel(self._auto_ping_job)
+            except Exception:
+                pass
+        self._auto_ping_job = self.app.root.after(self.PING_INTERVAL_MS, self._do_auto_ping)
+
+    def _do_auto_ping(self):
+        """Perform auto ping and schedule next."""
+        self.ping_all_servers()
+        self._schedule_next_ping()
 
     def on_server_selected(self):
         """Called when user selects a server from combobox - save to current profile."""
@@ -43,7 +64,7 @@ class ServerManager:
                 pass
             return
 
-        srv_val = self.app.cb_server.get().strip()
+        srv_val = self.app.server_var.get().strip()
         if not srv_val:
             return
 
@@ -97,62 +118,91 @@ class ServerManager:
             self.refresh_server_list()
             self.app.server_var.set(data["name"])
             self.check_server_status()
-
+        
         AddServerDialog(self.app.root, on_add)
 
     def remove_server(self):
-        current = self.app.server_var.get()
-        if not current:
+        selected = self.app.server_var.get()
+        if not selected:
             return
-        is_saved = any(s["name"] == current for s in self.app.servers)
-        if not is_saved:
-            messagebox.showinfo(
-                "Info",
-                "This IP is not saved in the list.",
-                parent=self.app.root,
-            )
-            return
-        if len(self.app.servers) <= 1:
-            messagebox.showwarning(
-                "Warning",
-                "Cannot remove the last server!",
-                parent=self.app.root,
-            )
-            return
-        if messagebox.askyesno(
-            "Confirm",
-            f"Remove server '{current}'?",
-            parent=self.app.root,
-        ):
-            self.app.servers = [
-                s for s in self.app.servers if s["name"] != current
-            ]
+        
+        if messagebox.askyesno("Confirm", f"Remove server '{selected}'?"):
+            self.app.servers = [s for s in self.app.servers if s["name"] != selected]
             self.app.save_data()
             self.refresh_server_list()
-            self.app.server_var.set(self.app.servers[0]["name"])
+            
+            # Reset selection if any
+            if self.app.servers:
+                self.app.server_var.set(self.app.servers[0]["name"])
+            else:
+                self.app.server_var.set("")
             self.check_server_status()
 
     def refresh_server_list(self):
-        names = [s["name"] for s in self.app.servers]
-        self.app.cb_server["values"] = names
+        """Refresh server buttons."""
+        if hasattr(self.app, '_create_server_buttons'):
+            self.app._create_server_buttons()
+            # Trigger ping check
+            self.ping_all_servers()
 
-    def toggle_server_ui(self):
-        """Refresh server combobox and status, and toggle visibility."""
-        try:
-            srv_names = [s.get("name", "") for s in self.app.servers if s.get("ip")]
-            self.app.cb_server.configure(values=srv_names)
-        except Exception:
-            pass
+    def toggle_server_ui(self, enable=True):
+        """Refresh server buttons and status."""
+        self.refresh_server_list()
+
+    def ping_all_servers(self):
+        """Pings all servers in background and updates UI."""
+        threading.Thread(target=self._run_batched_ping, daemon=True).start()
+
+    def _run_batched_ping(self):
+        import concurrent.futures
+        import subprocess
+        import time
         
-        # Visibility logic removed: Server list is always visible.
+        def _ping_task(srv):
+            name = srv["name"]
+            ip = srv["ip"]
+            try:
+                host = ip.split(":")[0] if ":" in ip else ip
+                cmd = ["ping", "-n", "1", "-w", "1000", host]
+                
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
+                t0 = time.time()
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    startupinfo=startupinfo
+                )
+                dt = int((time.time() - t0) * 1000)
+                
+                if proc.returncode == 0:
+                    try:
+                        out = proc.stdout.decode("cp866", errors="ignore")
+                        if "time=" in out: # Windows output: "time=15ms"
+                            part = out.split("time=")[1]
+                            ms_str = part.split("ms")[0].strip()
+                            return name, int(ms_str)
+                        if "time<" in out:
+                            return name, 1
+                    except:
+                        pass
+                    return name, dt
+                else:
+                    return name, -1 # Offline
+            except:
+                return name, -1
 
-        if self.app.use_server_var.get():
-            try:
-                self.check_server_status()
-            except Exception:
-                pass
-        else:
-            try:
-                self.app.status_lbl.config(text="")
-            except Exception:
-                pass
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            if not hasattr(self.app, 'servers'):
+                return
+            futures = [executor.submit(_ping_task, s) for s in self.app.servers]
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    name, ms = future.result()
+                    if hasattr(self.app, 'update_server_latency'):
+                        self.app.root.after(0, lambda n=name, m=ms: self.app.update_server_latency(n, m))
+                except:
+                    pass

@@ -1,0 +1,148 @@
+{
+    "doc_path": "C:\\Users\\skynk\\Documents\\Neverwinter Nights",
+    "exe_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Neverwinter Nights\\bin\\win32\\nwmain.exe",
+    "servers": [
+        {
+            "name": "Cormyr Main (91.202.25.110)",
+            "ip": "91.202.25.110"
+        },
+        {
+            "name": "Cormyr Mirror 1 (159.69.240.215:5122)",
+            "ip": "159.69.240.215:5122"
+        },
+        {
+            "name": "Cormyr Mirror 2 (85.198.108.93)",
+            "ip": "85.198.108.93"
+        }
+    ],
+    "profiles": [
+        {
+            "name": "Second",
+            "cdKey": "YUJXF-TL4V7-NKLD9-A94UL-YPTNM-QT3LK-UE9TM",
+            "playerName": "hocyyy",
+            "category": "Cormyr",
+            "launchArgs": "",
+            "server": "Cormyr Mirror 1 (159.69.240.215:5122)",
+            "server_group": "cormyr",
+            "is_crafter": false
+        },
+        {
+            "name": "Main",
+            "cdKey": "3UDXM-HNPHX-4XM3L-CEAF3-NPAUN-3CPD9-QTFXT",
+            "playerName": "hocyy",
+            "category": "Cormyr",
+            "launchArgs": "",
+            "server": "Cormyr Mirror 1 (159.69.240.215:5122)",
+            "server_group": "cormyr",
+            "is_crafter": false
+        },
+        {
+            "name": "Main",
+            "cdKey": "YUJXF-TL4V7-NKLD9-A94UL-YPTNM-QT3LK-UE9TM",
+            "playerName": "16.09",
+            "category": "Siala",
+            "launchArgs": "",
+            "server": "",
+            "server_group": "siala",
+            "is_crafter": false
+        },
+        {
+            "name": "Missaa",
+            "cdKey": "3UDXM-HNPHX-4XM3L-CEAF3-NPAUN-3CPD9-QTFXT",
+            "playerName": "Missaa",
+            "category": "Siala",
+            "launchArgs": "",
+            "server": "",
+            "server_group": "siala",
+            "is_crafter": false
+        }
+    ],
+    "auto_connect": true,
+    "last_server": "Cormyr Mirror 1 (159.69.240.215:5122)",
+    "exit_coords_x": 950,
+    "exit_coords_y": 640,
+    "confirm_coords_x": 802,
+    "confirm_coords_y": 613,
+    "log_monitor": {
+        "enabled": true,
+        "log_path": "C:/Users/skynk/Documents/Neverwinter Nights/logs/nwclientLog1.txt",
+        "webhooks": [
+            "YOUR_WEBHOOK_URL_HERE"
+        ],
+        "keywords": [
+            "Enemy Spotted"
+        ],
+        "open_wounds": {
+            "enabled": false,
+            "key": "F1"
+        },
+        "auto_fog": {
+            "enabled": true,
+            "delay": 2
+        }
+    },
+    "hotkeys": {
+        "enabled": false,
+        "binds": [
+            {
+                "trigger": "4",
+                "sequence": [
+                    "NUMPAD0",
+                    "NUMPAD3",
+                    "NUMPAD2"
+                ],
+                "rightClick": true,
+                "comment": "nok",
+                "enabled": true
+            }
+        ]
+    },
+    "sessions": {
+        "3UDXM-HNPHX-4XM3L-CEAF3-NPAUN-3CPD9-QTFXT": 19704
+    },
+    "exit_speed": 0.1,
+    "esc_count": 1,
+    "clip_margin": 48,
+    "show_tooltips": true,
+    "theme": "purple",
+    "favorite_potions": [
+        "Potion of Speed"
+    ],
+    "server_group": "cormyr",
+    "server_groups": {
+        "siala": [
+            {
+                "name": "Siala Main (play.siala.online)",
+                "ip": "play.siala.online"
+            },
+            {
+                "name": "Siala Test (91.202.25.110:5122)",
+                "ip": "91.202.25.110:5122"
+            }
+        ],
+        "cormyr": [
+            {
+                "name": "Cormyr Main (91.202.25.110)",
+                "ip": "91.202.25.110"
+            },
+            {
+                "name": "Cormyr Mirror 1 (159.69.240.215:5122)",
+                "ip": "159.69.240.215:5122"
+            },
+            {
+                "name": "Cormyr Mirror 2 (85.198.108.93)",
+                "ip": "85.198.108.93"
+            }
+        ]
+    },
+    "saved_keys": [
+        {
+            "name": "YUJXF-TL4V7-NKLD9-A94UL-YPTNM-QT3LK-UE9TM",
+            "key": "YUJXF-TL4V7-NKLD9-A94UL-YPTNM-QT3LK-UE9TM"
+        },
+        {
+            "name": "3UDXM-HNPHX-4XM3L-CEAF3-NPAUN-3CPD9-QTFXT",
+            "key": "3UDXM-HNPHX-4XM3L-CEAF3-NPAUN-3CPD9-QTFXT"
+        }
+    ]
+}

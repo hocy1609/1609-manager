@@ -60,15 +60,41 @@ def write_json_atomic(
 
 
 class SessionManager:
-    def __init__(self, filepath: str):
-        self.filepath = filepath
-        self.sessions: dict[str, int] = self.load()
+    """Manages active game sessions.
+    
+    Sessions are stored in the main settings file via app.save_data().
+    For backward compatibility, can also work with a file path directly.
+    """
+    def __init__(self, filepath_or_app):
+        self._app = None
+        self.filepath = None
+        self.sessions: dict[str, int] = {}
+        
+        # Check if it's an app reference or file path
+        if hasattr(filepath_or_app, 'save_data'):
+            self._app = filepath_or_app
+            # Sessions will be loaded from app's settings
+        else:
+            self.filepath = filepath_or_app
+            self.sessions = self.load()
+
+    def init_from_settings(self, sessions_dict: dict):
+        """Initialize sessions from loaded settings."""
+        self.sessions = sessions_dict or {}
 
     def load(self) -> dict:
-        return read_json(self.filepath, default={}) or {}
+        if self.filepath:
+            return read_json(self.filepath, default={}) or {}
+        return {}
 
     def save(self) -> None:
-        write_json_atomic(self.filepath, self.sessions)
+        if self._app:
+            # Sync to app's sessions and save
+            if hasattr(self._app, '_settings_sessions'):
+                self._app._settings_sessions = self.sessions.copy()
+            self._app.save_data()
+        elif self.filepath:
+            write_json_atomic(self.filepath, self.sessions)
 
     def add(self, key: str, pid: int) -> None:
         self.sessions[key] = pid

@@ -96,7 +96,21 @@ def build_settings_screen(app):
     ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Export Profiles", width=14, command=self.export_data).pack(side="left", padx=(0, 10))
     ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Import Profiles", width=14, command=self.import_data).pack(side="left", padx=(0, 10))
     ModernButton(data_inner, COLORS["success"], COLORS["success_hover"], text="Import xNwN.ini", width=14, command=self.import_xnwn_ini).pack(side="left", padx=(0, 10))
-    ModernButton(data_inner, COLORS["accent"], COLORS["accent_hover"], text="Open Backups", width=14, command=self.open_restore_dialog).pack(side="left")
+    ModernButton(data_inner, COLORS["accent"], COLORS["accent_hover"], text="Open Backups", width=14, command=self.open_restore_dialog).pack(side="left", padx=(0, 10))
+    
+    def _open_key_mgr():
+        from ui.dialogs import KeyManagementDialog
+        def on_save(keys):
+            self.saved_keys[:] = keys
+            self.save_data()
+        try:
+            keys = getattr(self, "saved_keys", [])
+        except AttributeError:
+            self.saved_keys = []
+            keys = self.saved_keys
+        KeyManagementDialog(self.root, keys, on_save)
+        
+    ModernButton(data_inner, COLORS["bg_panel"], COLORS["border"], text="Manage CD Keys", width=14, command=_open_key_mgr).pack(side="left")
 
     # Save button
     btn_frame = tk.Frame(main, bg=COLORS["bg_root"])

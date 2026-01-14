@@ -16,6 +16,7 @@ from ui.screens import (
     build_settings_screen,
     build_log_monitor_screen,
     build_help_screen,
+    build_hotkeys_screen,
 )
 
 
@@ -29,9 +30,17 @@ class UIStateManager:
         root = self.app.root
         root.title("16:09 Launcher")
 
-        width, height = 1000, 600
+        width, height = 1100, 600
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        root.geometry(f"{width}x{height}+{(sw-width)//2}+{(sh-height)//2}")
+        
+        # Fixed size window, centered
+        x = (sw-width)//2
+        y = (sh-height)//2
+        root.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Disable resizing
+        root.resizable(False, False)
+        
         root.configure(bg=COLORS["bg_root"])
         root.overrideredirect(True)
 
@@ -182,6 +191,7 @@ class UIStateManager:
         # Create all screens
         self.create_home_screen()
         self.create_craft_screen()
+        self.create_hotkeys_screen()
         self.create_settings_screen()
         self.create_log_monitor_screen()
         self.create_help_screen()
@@ -294,3 +304,8 @@ class UIStateManager:
     def create_help_screen(self):
         """Help screen - delegated."""
         return build_help_screen(self.app)
+
+    def create_hotkeys_screen(self):
+        """Hotkeys screen - delegated."""
+        return build_hotkeys_screen(self.app)
+
