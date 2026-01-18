@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import os
-from ui.ui_base import COLORS, TitleBarButton, ToolTip
+from ui.ui_base import COLORS, TitleBarButton
 
 class TitleBar:
     def __init__(self, app, parent):
@@ -43,11 +43,6 @@ class TitleBar:
         self.min_btn = TitleBarButton(self.frame, "_", self.app.minimize_window)
         self.min_btn.pack(side="right", fill="y")
 
-        # Settings button
-        self.settings_btn = TitleBarButton(self.frame, "⚙", self.app.open_settings)
-        self.settings_btn.pack(side="right", fill="y")
-        ToolTip(self.settings_btn, "Настройки")
-
     def start_move(self, event):
         self._drag_data["x"] = event.x
         self._drag_data["y"] = event.y
@@ -56,6 +51,16 @@ class TitleBar:
         x = self.root.winfo_x() + (event.x - self._drag_data["x"])
         y = self.root.winfo_y() + (event.y - self._drag_data["y"])
         self.root.geometry(f"+{x}+{y}")
+
+    def apply_theme(self):
+        """Update colors for theme switch."""
+        try:
+            self.frame.config(bg=COLORS["bg_panel"])
+            self.title_lbl.config(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+            self.close_btn.update_colors()
+            self.min_btn.update_colors()
+        except Exception:
+            pass
 
 
 class StatusBar:
@@ -80,7 +85,7 @@ class StatusBar:
             font=("Segoe UI", 9)
         )
         self.labels["sessions"].pack(side="left")
-        ToolTip(self.labels["sessions"], "Количество запущенных игровых сессий")
+
         
         # Separator
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
@@ -96,7 +101,7 @@ class StatusBar:
         )
         self.labels["log_monitor"].pack(side="left", padx=5)
         self.labels["log_monitor"].bind("<Button-1>", lambda e: self._toggle_log_monitor())
-        ToolTip(self.labels["log_monitor"], "Клик для вкл/выкл мониторинга лога")
+
         
         # Separator
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
@@ -115,7 +120,7 @@ class StatusBar:
         )
         self.labels["slayer"].pack(side="left", padx=5)
         self.labels["slayer"].bind("<Button-1>", lambda e: self._toggle_slayer())
-        ToolTip(self.labels["slayer"], "Клик для вкл/выкл Open Wounds")
+
         
         # Slayer hit counter
         self.labels["slayer_hits"] = tk.Label(
@@ -126,7 +131,7 @@ class StatusBar:
             font=("Segoe UI", 9)
         )
         self.labels["slayer_hits"].pack(side="left", padx=(0, 5))
-        ToolTip(self.labels["slayer_hits"], "Счётчик срабатываний Slayer за сессию")
+
         
         # Separator before Hotkeys
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
@@ -142,7 +147,7 @@ class StatusBar:
         )
         self.labels["hotkeys"].pack(side="left", padx=5)
         self.labels["hotkeys"].bind("<Button-1>", lambda e: self._toggle_hotkeys())
-        ToolTip(self.labels["hotkeys"], "Клик для вкл/выкл горячих клавиш")
+
         
         # Separator before Auto-Fog
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
@@ -158,32 +163,44 @@ class StatusBar:
         )
         self.labels["auto_fog"].pack(side="left", padx=5)
         self.labels["auto_fog"].bind("<Button-1>", lambda e: self._toggle_auto_fog())
-        ToolTip(self.labels["auto_fog"], "Клик для вкл/выкл Auto-Fog")
+
     
     def _toggle_hotkeys(self):
         """Toggle hotkeys enabled state on click."""
         try:
             print("[StatusBar] _toggle_hotkeys clicked")
-            hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
-            new_enabled = not hotkeys_cfg.get('enabled', False)
-            self.app.hotkeys_config['enabled'] = new_enabled
-            print(f"[StatusBar] Hotkeys enabled = {new_enabled}")
+            # Try to toggle variable first
+            var = getattr(self.app, 'hotkeys_enabled_var', None)
             
-            if new_enabled:
-                # Start hotkeys using _apply_saved_hotkeys method
-                if hasattr(self.app, '_apply_saved_hotkeys'):
-                    self.app._apply_saved_hotkeys()
-                    print("[StatusBar] Hotkeys applied via _apply_saved_hotkeys")
+            if var:
+                new_enabled = not var.get()
+                var.set(new_enabled)
+                print(f"[StatusBar] Hotkeys var set to {new_enabled}")
+                # Manual trigger logic since this var might not have a trace in all versions
+                self.app.hotkeys_config['enabled'] = new_enabled
+                if new_enabled:
+                    if hasattr(self.app, '_apply_saved_hotkeys'):
+                        self.app._apply_saved_hotkeys()
+                else:
+                    if hasattr(self.app, 'multi_hotkey_manager'):
+                        self.app.multi_hotkey_manager.unregister_all()
+                if hasattr(self.app, 'save_data'):
+                    self.app.save_data()
             else:
-                # Stop hotkeys
-                if hasattr(self.app, 'multi_hotkey_manager'):
-                    print("[StatusBar] Stopping hotkeys")
-                    self.app.multi_hotkey_manager.unregister_all()
-            
-            # Save settings
-            if hasattr(self.app, 'save_data'):
-                self.app.save_data()
-                print("[StatusBar] Settings saved")
+                # Fallback logic
+                hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
+                new_enabled = not hotkeys_cfg.get('enabled', False)
+                self.app.hotkeys_config['enabled'] = new_enabled
+                
+                if new_enabled:
+                    if hasattr(self.app, '_apply_saved_hotkeys'):
+                        self.app._apply_saved_hotkeys()
+                else:
+                    if hasattr(self.app, 'multi_hotkey_manager'):
+                        self.app.multi_hotkey_manager.unregister_all()
+                
+                if hasattr(self.app, 'save_data'):
+                    self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_hotkeys: {e}")
     
@@ -191,50 +208,67 @@ class StatusBar:
         """Toggle log monitor on click."""
         try:
             if hasattr(self.app, 'log_monitor_manager'):
-                # Check if running
+                # Check if running to decide toggle direction
+                # Uses the manager's logic which updates the variable
                 is_running = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
                 if is_running:
                     self.app.log_monitor_manager.stop_log_monitor()
-                    print("[StatusBar] Log Monitor stopped")
+                    # Also ensure the variable is synced if manager didn't (paranoid check)
+                    try:
+                        if hasattr(self.app.log_monitor_state, 'enabled_var'):
+                            self.app.log_monitor_state.enabled_var.set(False)
+                    except Exception:
+                        pass
                 else:
                     self.app.log_monitor_manager.start_log_monitor()
-                    print("[StatusBar] Log Monitor started")
+                    try:
+                        if hasattr(self.app.log_monitor_state, 'enabled_var'):
+                            self.app.log_monitor_state.enabled_var.set(True)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_log_monitor: {e}")
     
     def _toggle_slayer(self):
         """Toggle Slayer (Open Wounds) on click."""
         try:
-            ow_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
-            new_enabled = not ow_cfg.get("enabled", False)
-            self.app.log_monitor_state.config["open_wounds"]["enabled"] = new_enabled
-            print(f"[StatusBar] Slayer enabled = {new_enabled}")
-            
-            # Update UI state
-            if hasattr(self.app, 'log_monitor_manager'):
-                self.app.log_monitor_manager.update_slayer_ui_state()
-            
-            # Start/stop slayer monitor if needed
-            if hasattr(self.app, 'log_monitor_manager'):
-                self.app.log_monitor_manager._ensure_slayer_if_enabled()
-            
-            # Save
-            if hasattr(self.app, 'save_data'):
-                self.app.save_data()
+            # Retrieve variable
+            var = getattr(self.app.log_monitor_state, 'open_wounds_enabled_var', None)
+            if var:
+                # Toggle variable - trace will handle config save and UI updates
+                new_val = not var.get()
+                var.set(new_val)
+                print(f"[StatusBar] Toggling Slayer var to {new_val}")
+            else:
+                # Fallback if var not ready
+                ow_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
+                new_enabled = not ow_cfg.get("enabled", False)
+                self.app.log_monitor_state.config["open_wounds"]["enabled"] = new_enabled
+                if hasattr(self.app, 'log_monitor_manager'):
+                    self.app.log_monitor_manager.update_slayer_ui_state()
+                    self.app.log_monitor_manager._ensure_slayer_if_enabled()
+                if hasattr(self.app, 'save_data'):
+                    self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_slayer: {e}")
     
     def _toggle_auto_fog(self):
         """Toggle Auto-Fog on click."""
         try:
-            af_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
-            new_enabled = not af_cfg.get("enabled", False)
-            self.app.log_monitor_state.config["auto_fog"]["enabled"] = new_enabled
-            print(f"[StatusBar] Auto-Fog enabled = {new_enabled}")
-            
-            # Save
-            if hasattr(self.app, 'save_data'):
-                self.app.save_data()
+            # Retrieve variable
+            var = getattr(self.app.log_monitor_state, 'auto_fog_enabled_var', None)
+            if var:
+                # Toggle variable - trace will handle config save and UI updates
+                new_val = not var.get()
+                var.set(new_val)
+                print(f"[StatusBar] Toggling Auto-Fog var to {new_val}")
+            else:
+                # Fallback
+                af_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
+                new_enabled = not af_cfg.get("enabled", False)
+                self.app.log_monitor_state.config["auto_fog"]["enabled"] = new_enabled
+                if hasattr(self.app, 'save_data'):
+                    self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_auto_fog: {e}")
 
@@ -339,7 +373,7 @@ class NavigationBar:
             ("📊", "Log Monitor", "log_monitor", "Мониторинг лога игры"),
             ("⌨️", "Hotkeys", "hotkeys", "Настройка горячих клавиш"),
             ("🔨", "Craft", "craft", "Автокрафт и управление макросами"),
-            ("❓", "Help", "help", "Справка и горячие клавиши"),
+            ("⚙️", "Settings", "settings", "Настройки приложения"),
         ]
         
         for icon, text, screen, tooltip_text in btn_defs:
@@ -388,8 +422,7 @@ class NavigationBar:
             btn_frame.bind("<Enter>", lambda e, s=screen: self._on_hover(s, True), add="+")
             btn_frame.bind("<Leave>", lambda e, s=screen: self._on_hover(s, False), add="+")
             
-            # Tooltip
-            ToolTip(btn_frame, tooltip_text)
+
     
     def _on_click(self, screen):
         """Handle button click."""

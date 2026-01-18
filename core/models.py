@@ -305,7 +305,6 @@ class Settings:
             exit_speed=_clean_float(data.get("exit_speed", 0.1)),
             esc_count=_clean_int(data.get("esc_count", 1)),
             clip_margin=_clean_int(data.get("clip_margin", 48)),
-            show_tooltips=_clean_bool(data.get("show_tooltips", True)),
             theme=_clean_str(data.get("theme", "dark")) or "dark",
             favorite_potions=[_clean_str(p) for p in _clean_list(data.get("favorite_potions", []))],
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",

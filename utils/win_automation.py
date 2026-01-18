@@ -730,15 +730,38 @@ def press_key_by_name(key_name: str):
             pass
 
 
-def press_key_sequence(keys: list, delay: float = 0.01):
-    """Нажимает последовательность клавиш с задержкой между ними.
+def left_click():
+    """Выполняет левый клик мыши."""
+    try:
+        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        time.sleep(0.02)
+        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    except Exception as e:
+        print(f"[LeftClick] Error: {e}")
+
+
+def press_key_sequence(keys: list, delay: float = 0.05):
+    """Нажимает последовательность клавиш/действий с задержкой между ними.
+    
+    Поддерживаемые специальные команды:
+        - LEFTCLICK: Левый клик мыши в текущей позиции курсора
+        - RIGHTCLICK: Правый клик мыши в текущей позиции курсора
+        - Обычные клавиши: NUMPAD0-9, F1-F12, A-Z, и т.д.
     
     Args:
-        keys: Список имен клавиш (например, ['NUMPAD0', 'NUMPAD3', 'NUMPAD2'])
-        delay: Задержка между нажатиями в секундах
+        keys: Список имен клавиш/команд (например, ['F2', 'LEFTCLICK', 'F2'])
+        delay: Задержка между действиями в секундах
     """
     for key in keys:
-        press_key_by_name(key)
+        key_upper = key.upper().strip()
+        
+        if key_upper == "LEFTCLICK":
+            left_click()
+        elif key_upper == "RIGHTCLICK":
+            right_click()
+        else:
+            press_key_by_name(key)
+        
         time.sleep(delay)
 
 

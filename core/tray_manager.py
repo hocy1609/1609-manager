@@ -74,13 +74,14 @@ class TrayManager:
         self.icon: Optional["pystray.Icon"] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._minimized = False
     
     def is_available(self) -> bool:
         """Check if tray functionality is available."""
         return TRAY_AVAILABLE
     
     def setup(self, on_show: Callable = None, on_quit: Callable = None):
-        """Setup the tray icon with menu."""
+        """Setup the tray icon with menu and start it immediately."""
         if not TRAY_AVAILABLE:
             return False
         
@@ -103,9 +104,12 @@ class TrayManager:
             menu
         )
         
+        # Start icon thread - icon will be visible immediately
+        self._start_tray()
+        
         return True
     
-    def start(self):
+    def _start_tray(self):
         """Start the tray icon in background thread."""
         if not self.icon or self._running:
             return
@@ -117,6 +121,7 @@ class TrayManager:
     def _run_icon(self):
         """Run the icon loop."""
         try:
+            # Run the icon - it will stay running until stop() is called
             self.icon.run()
         except Exception as e:
             print(f"[TrayManager] Error: {e}")
@@ -131,6 +136,7 @@ class TrayManager:
             except Exception:
                 pass
         self._running = False
+        self._minimized = False
     
     def minimize_to_tray(self):
         """Hide the window and show tray icon."""
@@ -138,9 +144,17 @@ class TrayManager:
             return False
         
         try:
+            # Hide the main window
             self.app.root.withdraw()
-            if not self._running:
-                self.start()
+            self._minimized = True
+            
+            # Icon is already running from setup, just make sure it's visible
+            if self.icon:
+                try:
+                    self.icon.visible = True
+                except Exception:
+                    pass
+            
             return True
         except Exception as e:
             print(f"[TrayManager] Minimize error: {e}")
@@ -149,11 +163,16 @@ class TrayManager:
     def restore_from_tray(self):
         """Show the window from tray."""
         try:
+            self._minimized = False
             self.app.root.deiconify()
             self.app.root.lift()
             self.app.root.focus_force()
         except Exception as e:
             print(f"[TrayManager] Restore error: {e}")
+    
+    def is_minimized(self) -> bool:
+        """Check if window is currently minimized to tray."""
+        return self._minimized
     
     def _default_show(self, icon=None, item=None):
         """Default action to show the window."""

@@ -64,11 +64,19 @@ class ProfileManager:
         # Pre-calculate active cdkeys for O(1) lookup
         active_cdkeys = set()
         if hasattr(self.app, 'sessions') and self.app.sessions:
-            for key in self.app.sessions.sessions.keys():
-                # key format: "player_name::cdkey"
-                parts = key.split("::")
-                if len(parts) > 1:
-                    active_cdkeys.add(parts[-1])
+            try:
+                # Safely access sessions, handling potentially malformed keys or types
+                sessions_map = getattr(self.app.sessions, 'sessions', {}) or {}
+                if isinstance(sessions_map, dict):
+                    for key in sessions_map.keys():
+                        if not isinstance(key, str):
+                            continue
+                        # key format: "player_name::cdkey"
+                        parts = key.split("::")
+                        if len(parts) > 1:
+                            active_cdkeys.add(parts[-1])
+            except Exception:
+                pass
 
         current_cat = None
         
@@ -160,6 +168,7 @@ class ProfileManager:
                 "category": data.get("category", "General"),
                 "launchArgs": data.get("launchArgs", ""),
                 "is_crafter": bool(data.get("is_crafter", False)),
+                "server_group": self.app.server_group if hasattr(self.app, 'server_group') else "siala",
             }
             self.app.profiles.append(new_p)
             self.app.save_data()
@@ -497,36 +506,43 @@ class ProfileManager:
 
         x, y, w, h = bbox
         
-        # Create a frame on top of the listbox
-        # We put it inside listbox? No, place it relative to listbox
-        self._inline_frame = tk.Frame(self.app.lb, bg=COLORS["bg_sidebar"], height=h)
+        # Create a frame on top of the listbox with proper background
+        bg_color = COLORS["bg_input"]
+        self._inline_frame = tk.Frame(self.app.lb, bg=bg_color, height=h, relief="flat", bd=0)
+        
+        # Inner container for proper padding
+        inner = tk.Frame(self._inline_frame, bg=bg_color)
+        inner.pack(fill="both", expand=True, padx=4, pady=2)
         
         # Edit btn
         btn_edit = tk.Label(
-            self._inline_frame, text="✎", bg=COLORS["bg_sidebar"], 
-            fg=COLORS["fg_dim"], font=("Segoe UI", 10), cursor="hand2"
+            inner, text="✎", bg=bg_color, 
+            fg=COLORS["accent"], font=("Segoe UI", 11), cursor="hand2",
+            padx=4, pady=0
         )
-        btn_edit.pack(side="right", padx=2)
+        btn_edit.pack(side="left", padx=(0, 2))
         btn_edit.bind("<Button-1>", lambda e: self._inline_edit_profile())
-        bind_hover_effects(btn_edit, COLORS["bg_sidebar"], COLORS["accent"], COLORS["fg_dim"])
+        bind_hover_effects(btn_edit, bg_color, COLORS["bg_panel"], COLORS["accent"], COLORS["success"])
         
         # Delete btn
         btn_del = tk.Label(
-            self._inline_frame, text="✖", bg=COLORS["bg_sidebar"], 
-            fg=COLORS["fg_dim"], font=("Segoe UI", 10), cursor="hand2"
+            inner, text="✖", bg=bg_color, 
+            fg=COLORS["danger"], font=("Segoe UI", 11), cursor="hand2",
+            padx=4, pady=0
         )
-        btn_del.pack(side="right", padx=2)
+        btn_del.pack(side="left", padx=(0, 2))
         btn_del.bind("<Button-1>", lambda e: self._inline_delete_profile())
-        bind_hover_effects(btn_del, COLORS["bg_sidebar"], COLORS["danger"], COLORS["fg_dim"])
+        bind_hover_effects(btn_del, bg_color, COLORS["bg_panel"], COLORS["danger"], COLORS["danger_hover"])
         
-        # Place it at the right edge of the listbox
-        req_w = 54 
+        # Calculate position - place at right edge
+        btn_width = 60
         lb_w = self.app.lb.winfo_width()
-        place_x = lb_w - req_w - 6 # Leave room for visual scrollbar / padding
+        place_x = lb_w - btn_width - 4
         
-        if place_x < 0: place_x = 0
+        if place_x < 0: 
+            place_x = 0
         
-        self._inline_frame.place(x=place_x, y=y, width=req_w, height=h)
+        self._inline_frame.place(x=place_x, y=y, width=btn_width, height=h)
         
         # Bind enter/leave for the frame too, so it doesn't disappear when we move mouse over it
         self._inline_frame.bind("<Enter>", lambda e: self._cancel_inline_hide())

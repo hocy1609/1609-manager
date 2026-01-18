@@ -615,6 +615,18 @@ class NWNManagerApp:
             save_settings(self.settings_path, settings)
         except Exception as e:
             self.log_error("save_data", e)
+            print(f"SAVE ERROR: {e}")
+
+        # DEBUG: Print what we just saved
+        try:
+            print(f"DEBUG: Saved keys count: {len(getattr(self, 'saved_keys', []))}")
+            if getattr(self, 'saved_keys', []):
+                print(f"DEBUG: Saved keys content: {self.saved_keys}")
+            
+            hk = getattr(self, 'hotkeys_config', {})
+            print(f"DEBUG: Hotkeys config: {hk}")
+        except Exception as e:
+            print(f"DEBUG ERROR: {e}")
 
     def schedule_save(self, delay_ms: int = SAVE_DEBOUNCE_DELAY_MS):
         """Debounced save: schedule `save_data` after `delay_ms` milliseconds, cancelling previous schedule.
@@ -648,8 +660,28 @@ class NWNManagerApp:
             return
 
         data_to_export = {
+            "version": "1.0",
+            "timestamp": datetime.now().isoformat(),
             "profiles": self.profiles,
             "servers": self.servers,
+            "hotkeys": getattr(self, "hotkeys_config", {}),
+            "log_monitor": self.log_monitor_state.config if hasattr(self, 'log_monitor_state') else {},
+            "app_settings": {
+                "theme": getattr(self, "theme", "dark"),
+                "auto_connect": self.use_server_var.get(),
+                "doc_path": self.doc_path_var.get(),
+                "exe_path": self.exe_path_var.get(),
+                "exit_coords_x": getattr(self, "exit_x", 0),
+                "exit_coords_y": getattr(self, "exit_y", 0),
+                "confirm_coords_x": getattr(self, "confirm_x", 0),
+                "confirm_coords_y": getattr(self, "confirm_y", 0),
+                "exit_speed": getattr(self, "exit_speed", 0.1),
+                "esc_count": getattr(self, "esc_count", 1),
+                "clip_margin": getattr(self, "clip_margin", 48),
+                "favorite_potions": list(getattr(self, "favorite_potions", set())),
+                "server_group": getattr(self, "server_group", "siala"),
+                "saved_keys": getattr(self, "saved_keys", []),
+            }
         }
 
         try:
@@ -730,6 +762,62 @@ class NWNManagerApp:
                 if s.get("ip")
                 and s.get("name") != "Без авто-подключения (Меню)"
             ]
+
+            # Import Settings & Hotkeys if present
+            if "app_settings" in new_data or "hotkeys" in new_data:
+                if messagebox.askyesno(
+                    "Import Settings",
+                    "Backup contains Application Settings and Hotkeys.\n\nDo you want to import them?\nThis will overwrite your current configuration (Theme, Paths, Hotkeys, etc).",
+                    parent=parent
+                ):
+                    # Import Hotkeys
+                    if "hotkeys" in new_data:
+                        self.hotkeys_config = new_data["hotkeys"]
+                        # Re-register if enabled
+                        if self.hotkeys_config.get("enabled", False):
+                            self._apply_saved_hotkeys()
+                        else:
+                            if hasattr(self, 'multi_hotkey_manager'):
+                                self.multi_hotkey_manager.unregister_all()
+
+                    # Import Log Monitor Config
+                    if "log_monitor" in new_data:
+                        self.log_monitor_state.config = new_data["log_monitor"]
+                        # Refresh UI state if needed (toggle switches will update on next refresh/load)
+                    
+                    # Import General Settings
+                    app_settings = new_data.get("app_settings", {})
+                    if app_settings:
+                        self.theme = app_settings.get("theme", self.theme)
+                        self.use_server_var.set(app_settings.get("auto_connect", False))
+                        self.doc_path_var.set(app_settings.get("doc_path", self.doc_path_var.get()))
+                        self.exe_path_var.set(app_settings.get("exe_path", self.exe_path_var.get()))
+                        
+                        self.exit_x = app_settings.get("exit_coords_x", self.exit_x)
+                        self.exit_y = app_settings.get("exit_coords_y", self.exit_y)
+                        self.confirm_x = app_settings.get("confirm_coords_x", self.confirm_x)
+                        self.confirm_y = app_settings.get("confirm_coords_y", self.confirm_y)
+                        self.exit_speed = app_settings.get("exit_speed", self.exit_speed)
+                        self.esc_count = app_settings.get("esc_count", self.esc_count)
+                        self.clip_margin = app_settings.get("clip_margin", self.clip_margin)
+                        
+                        self._loaded_favorite_potions = set(app_settings.get("favorite_potions", []))
+                        self.favorite_potions = self._loaded_favorite_potions # Ensure runtime set is updated
+                        
+                        self.server_group = app_settings.get("server_group", self.server_group)
+                        
+                        # Merge saved keys (don't delete existing ones, just add new unique ones)
+                        imported_keys = app_settings.get("saved_keys", [])
+                        if imported_keys:
+                            existing_key_values = {k.get("key") for k in self.saved_keys}
+                            for key_entry in imported_keys:
+                                if key_entry.get("key") not in existing_key_values:
+                                    self.saved_keys.append(key_entry)
+
+                        # Apply Theme immediately
+                        if hasattr(self, 'theme_manager'):
+                            self.theme_manager.set_theme(self.theme)
+                            self.apply_theme()
 
             self.save_data()
             self.refresh_list()
@@ -949,68 +1037,20 @@ class NWNManagerApp:
         if hasattr(self, 'settings_manager'):
             self.settings_manager.open_settings()
 
-    # === БЭКАПЫ ===
-
-    def backup_files(self):
-        try:
-            doc_path = self.doc_path_var.get()
-            if not os.path.exists(doc_path):
-                return
-
-            backup_dir = os.path.join(doc_path, "_manager_backups")
-            if not os.path.exists(backup_dir):
-                os.makedirs(backup_dir)
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            # 1. Backup Game Configs (from Doc Path)
-            for fname in ["nwncdkey.ini", "settings.tml"]:
-                src = os.path.join(doc_path, fname)
-                if os.path.exists(src):
-                    dst = os.path.join(backup_dir, f"{fname}_{timestamp}.bak")
-                    shutil.copy2(src, dst)
-
-            # 2. Backup Manager Configs (from Data Dir)
-            # self.settings_path -> nwn_settings.json
-            # self.sessions_path -> nwn_sessions.json
-            manager_files = [
-                (self.settings_path, "nwn_settings.json"),
-                (self.sessions_path, "nwn_sessions.json")
-            ]
-            for src_path, fname in manager_files:
-                if os.path.exists(src_path):
-                    dst = os.path.join(backup_dir, f"{fname}_{timestamp}.bak")
-                    shutil.copy2(src_path, dst)
-
-            # Cleanup old backups
-            all_types = ["nwncdkey.ini", "settings.tml", "nwn_settings.json", "nwn_sessions.json"]
-            for file_type in all_types:
-                type_files = [
-                    os.path.join(backup_dir, f)
-                    for f in os.listdir(backup_dir)
-                    if f.startswith(file_type) and f.endswith(".bak")
-                ]
-                type_files.sort(key=os.path.getmtime)
-                while len(type_files) > MAX_BACKUPS_PER_FILE:
-                    old_file = type_files.pop(0)
-                    try:
-                        os.remove(old_file)
-                    except Exception:
-                        logging.exception("Unhandled exception")
-        except Exception as e:
-            self.log_error("backup_files", e)
+    # Old backup_files method removed - now using _backup_settings() which only
+    # backs up program settings (nwn_settings.json), not game files
 
     def open_restore_dialog(self):
-        doc_path = self.doc_path_var.get()
-        backup_dir = os.path.join(doc_path, "_manager_backups")
+        """Open dialog to restore settings from backup."""
         try:
-            if not os.path.exists(backup_dir):
-                os.makedirs(backup_dir, exist_ok=True)
-            # Показываем диалог всегда; он сам отобразит пустой список при отсутствии файлов
+            # Use the backups directory in data_dir (1609 settings/backups/)
+            if not os.path.exists(self.backups_dir):
+                os.makedirs(self.backups_dir, exist_ok=True)
+            
             RestoreBackupDialog(
                 self.root,
-                backup_dir,
-                doc_path,
+                self.backups_dir,
+                self.settings_path,
                 on_export=self.export_data,
                 on_import=self.import_data,
             )
@@ -1389,8 +1429,39 @@ class NWNManagerApp:
             self.confirm_y = int(self.settings_confirm_y.get())
             self.exit_speed = float(self.settings_exit_speed.get())
             self.esc_count = int(self.settings_esc_count.get())
+            self.clip_margin = int(self.settings_clip_margin.get())
+            
+            # UI Settings
+            self.show_tooltips = bool(self.settings_show_tooltips.get())
+            new_theme = self.settings_theme.get()
+            theme_changed = (new_theme != self.theme)
+            self.theme = new_theme
+            
+            # Apply tooltips setting
+            try:
+                import ui.ui_base as _uib
+                _uib.TOOLTIPS_ENABLED = self.show_tooltips
+                _uib.set_tooltips_enabled(self.show_tooltips)
+            except Exception:
+                pass
+            
+            # Apply theme if changed
+            if theme_changed:
+                try:
+                    import ui.ui_base as _uib
+                    _uib.set_theme(self.theme, root=self.root)
+                except Exception:
+                    pass
+            
             self.save_data()
             messagebox.showinfo("Success", "Settings saved!")
+            
+            # Rebuild UI if theme changed
+            if theme_changed:
+                try:
+                    self.apply_theme()
+                except Exception as e:
+                    self.log_error("apply_theme_in_settings", e)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save: {e}")
     
@@ -1914,7 +1985,7 @@ class NWNManagerApp:
             )
             return
 
-        self.backup_files()
+        # Backups are now handled automatically by save_data() via _backup_settings()
 
         doc = self.doc_path_var.get()
         exe = self.exe_path_var.get()
@@ -2036,22 +2107,124 @@ class NWNManagerApp:
                 logging.exception("Unhandled exception")
         threading.Thread(target=_wait_and_launch, daemon=True).start()
 
+# === SINGLE INSTANCE CHECK ===
+LOCK_FILE_NAME = "1609_manager.lock"
+
+def _get_lock_file_path():
+    """Get path to lock file in temp directory."""
+    return os.path.join(tempfile.gettempdir(), LOCK_FILE_NAME)
+
+def _is_process_running(pid: int) -> bool:
+    """Check if a process with given PID is running."""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        
+        exit_code = ctypes.wintypes.DWORD()
+        result = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        
+        if result and exit_code.value == STILL_ACTIVE:
+            return True
+        return False
+    except Exception:
+        return False
+
+def acquire_single_instance_lock():
+    """Try to acquire a file-based lock to ensure only one instance runs."""
+    lock_file = _get_lock_file_path()
+    current_pid = os.getpid()
+    
+    try:
+        # Check if lock file exists
+        if os.path.exists(lock_file):
+            try:
+                with open(lock_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+                
+                # Check if that process is still running
+                if _is_process_running(old_pid):
+                    # Another instance is running
+                    return False
+                else:
+                    # Old process is dead, remove stale lock
+                    os.remove(lock_file)
+            except (ValueError, OSError):
+                # Corrupted lock file, remove it
+                try:
+                    os.remove(lock_file)
+                except Exception:
+                    pass
+        
+        # Create new lock file with our PID
+        with open(lock_file, 'w') as f:
+            f.write(str(current_pid))
+        
+        return True
+    except Exception as e:
+        # On error, allow running
+        print(f"Lock check failed: {e}")
+        return True
+
+def release_lock():
+    """Remove lock file on exit."""
+    try:
+        lock_file = _get_lock_file_path()
+        if os.path.exists(lock_file):
+            with open(lock_file, 'r') as f:
+                pid = int(f.read().strip())
+            # Only remove if it's our lock
+            if pid == os.getpid():
+                os.remove(lock_file)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    # CRITICAL: Change CWD away from _MEIPASS FIRST before anything else
+    # This prevents "Failed to remove temporary directory" warning
     app_dir = get_app_dir()
+    try:
+        if getattr(sys, "frozen", False):
+            os.chdir(app_dir)
+            # Also close any inherited file handles that might lock the temp dir
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    
+    # Check for single instance (file-based lock)
+    if not acquire_single_instance_lock():
+        # Another instance is running - show message and exit
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showwarning(
+            "16:09 Manager",
+            "Программа уже запущена!\n\n"
+            "Проверьте системный трей (область уведомлений)."
+        )
+        root.destroy()
+        sys.exit(0)
+    
+    # Register cleanup for lock file
+    atexit.register(release_lock)
+    
     # Use '1609 settings' subfolder for all data files including logs
     data_dir = os.path.join(app_dir, "1609 settings")
     os.makedirs(data_dir, exist_ok=True)
     log_path = get_default_log_path(data_dir)
     configure_logging(log_path)
-    # For PyInstaller onefile builds: ensure our CWD is not the temporary
-    # extraction directory (_MEIxxxx). Keeping CWD inside that folder can
-    # sometimes prevent the bootloader from removing it and trigger the
-    # "Failed to remove temporary directory" warning.
-    try:
-        if getattr(sys, "frozen", False):
-            os.chdir(app_dir)
-    except Exception:
-        logging.exception("Failed to change working directory")
+    
     root = tk.Tk()
     app = NWNManagerApp(root)
     root.mainloop()

@@ -11,6 +11,7 @@ import os
 import time
 import json
 import threading
+import tkinter as tk
 from tkinter import messagebox, filedialog
 
 from ui.ui_base import COLORS

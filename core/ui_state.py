@@ -15,7 +15,6 @@ from ui.screens import (
     build_craft_screen,
     build_settings_screen,
     build_log_monitor_screen,
-    build_help_screen,
     build_hotkeys_screen,
 )
 
@@ -194,7 +193,6 @@ class UIStateManager:
         self.create_hotkeys_screen()
         self.create_settings_screen()
         self.create_log_monitor_screen()
-        self.create_help_screen()
 
         # Show home by default
         self.show_screen("home")
@@ -202,6 +200,42 @@ class UIStateManager:
         # Start status bar update loop
         self._update_status_bar_loop()
 
+    def rebuild_ui(self):
+        """Destroy all window content and rebuild from scratch.
+        
+        This is the nuclear option for theme application. Instead of trying to patch
+        colors on existing widgets (which is error-prone), we wipe the slate clean
+        and build everything fresh with the new theme globals.
+        """
+        try:
+            # 1. Save state
+            current_screen = self.app.current_screen
+            
+            # 2. Destroy all widgets in root
+            for widget in self.app.root.winfo_children():
+                widget.destroy()
+                
+            # 3. Reset component references
+            self.app.title_bar_comp = None
+            self.app.status_bar_comp = None
+            self.app.nav_bar_comp = None
+            self.app.nav_frame = None
+            self.app.content_frame = None
+            self.app.screens = {}
+            
+            # 4. Re-create UI
+            # This uses the CURRENT global COLORS (which should have been updated by set_theme)
+            self.create_ui()
+            
+            # 5. Restore screen
+            self.show_screen(current_screen)
+            
+            # 6. Force immediate update
+            self.app.root.update_idletasks()
+            
+        except Exception as e:
+            self.app.log_error("rebuild_ui", e)
+    
     def _update_status_bar_loop(self):
         """Periodically update status bar information."""
         try:
@@ -237,18 +271,37 @@ class UIStateManager:
             btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
 
     def show_screen(self, screen_name):
-        """Switch to specified screen."""
-        for frame in self.app.screens.values():
-            frame.pack_forget()
-
-        if screen_name in self.app.screens:
-            self.app.screens[screen_name].pack(fill="both", expand=True)
-            self.app.current_screen = screen_name
-
-            # Update navigation bar button styles
-            if self.app.nav_bar_comp:
-                for name in self.app.nav_bar_comp.buttons:
-                    self.app.nav_bar_comp._update_style(name)
+        """Switch to specified screen instantly."""
+        if screen_name not in self.app.screens:
+            return
+        
+        new_screen = self.app.screens.get(screen_name)
+        
+        # Hide all other screens
+        for name, screen in self.app.screens.items():
+            if name != screen_name:
+                try:
+                    screen.pack_forget()
+                except Exception:
+                    pass
+        
+        # Skip if same screen and already visible
+        try:
+            if screen_name == self.app.current_screen and new_screen.winfo_ismapped():
+                return
+        except Exception:
+            pass
+        
+        # Update state
+        self.app.current_screen = screen_name
+        
+        # Update navigation bar button styles
+        if self.app.nav_bar_comp:
+            for name in self.app.nav_bar_comp.buttons:
+                self.app.nav_bar_comp._update_style(name)
+        
+        # Show new screen
+        new_screen.pack(fill="both", expand=True)
 
     def create_home_screen(self):
         """Original main UI as home screen (delegated)."""
@@ -300,10 +353,6 @@ class UIStateManager:
     def create_log_monitor_screen(self):
         """Log monitor screen - delegated."""
         return build_log_monitor_screen(self.app)
-
-    def create_help_screen(self):
-        """Help screen - delegated."""
-        return build_help_screen(self.app)
 
     def create_hotkeys_screen(self):
         """Hotkeys screen - delegated."""

@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from ui.ui_base import COLORS, ModernButton, Separator
+from ui.ui_base import COLORS, ModernButton, ToggleSwitch, SectionFrame, Separator
 
 
 def build_home_screen(app):
@@ -176,9 +176,11 @@ def build_home_screen(app):
             if grp == self.server_group:
                 btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
                 btn.bg_color = COLORS["accent"]
+                btn._color_key = "accent"  # Update semantic key for theme switching
             else:
                 btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
                 btn.bg_color = COLORS["bg_panel"]
+                btn._color_key = "bg_panel"  # Update semantic key for theme switching
     
     self.server_group_buttons = {}
     
@@ -387,10 +389,10 @@ def build_home_screen(app):
     def _on_auto_connect_toggle():
         self.save_data()
     
-    from ui.ui_base import ToggleSwitch, ToolTip
+    from ui.ui_base import ToggleSwitch
     auto_toggle = ToggleSwitch(auto_connect_frame, variable=self.use_server_var, command=_on_auto_connect_toggle)
     auto_toggle.pack(side="left", padx=(5, 0))
-    ToolTip(auto_toggle, "Auto-connect to selected server on launch")
+
     
     self.status_lbl = tk.Label(
         srv_header,
@@ -453,7 +455,23 @@ def build_home_screen(app):
         current_row_frame = None
         COLS = 2
         
-        for i, s in enumerate(self.servers):
+        
+        # Heuristic filtering: if group is siala/cormyr, filter by name to prevent cross-contamination
+        # caused by bad imports
+        display_servers = []
+        group = getattr(self, 'server_group', '').lower()
+        
+        if group in ['siala', 'cormyr']:
+            filtered = [s for s in self.servers if group in s["name"].lower()]
+            # Only use filtered list if it's not empty, otherwise fallback to show all
+            if filtered:
+                display_servers = filtered
+            else:
+                display_servers = self.servers
+        else:
+            display_servers = self.servers
+
+        for i, s in enumerate(display_servers):
             # Create new row frame every COLS buttons
             if i % COLS == 0:
                 current_row_frame = tk.Frame(self.srv_buttons_frame, bg=COLORS["bg_root"])
@@ -528,9 +546,11 @@ def build_home_screen(app):
             if srv_name == current:
                 btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
                 btn.bg_color = COLORS["accent"]
+                btn._color_key = "accent"  # Update semantic key for theme switching
             else:
                 btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
                 btn.bg_color = COLORS["bg_panel"]
+                btn._color_key = "bg_panel"  # Update semantic key for theme switching
     
     self._create_server_buttons = _create_server_buttons
     self._update_server_button_styles = _update_server_button_styles

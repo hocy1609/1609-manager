@@ -34,47 +34,6 @@ _MODERN_BUTTONS = weakref.WeakSet()
 _TITLEBAR_BUTTONS = weakref.WeakSet()
 
 
-class ToolTip:
-    def __init__(self, widget, text: str):
-        self.widget = widget
-        self.text = text
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-
-    def show_tooltip(self, event=None):
-        if self.tooltip_window or not self.text:
-            return
-        try:
-            x, y, _, _ = self.widget.bbox("insert")
-        except Exception:
-            x = y = 0
-        x += self.widget.winfo_rootx() + 20
-        y += self.widget.winfo_rooty() + 20
-        tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(
-            tw,
-            text=self.text,
-            justify="left",
-            background=COLORS.get("tooltip_bg", COLORS["bg_root"]),
-            foreground=COLORS.get("accent", "#88C0D0"),
-            relief="solid",
-            borderwidth=1,
-            font=("Segoe UI", 8),
-        )
-        label.pack(ipadx=5, ipady=2)
-        self.tooltip_window = tw
-
-    def hide_tooltip(self, event=None):
-        if self.tooltip_window:
-            try:
-                self.tooltip_window.destroy()
-            except Exception:
-                pass
-            self.tooltip_window = None
-
 
 class ModernButton(tk.Button):
     def __init__(self, master, bg_color, hover_color, tooltip: str = "", **kwargs):
@@ -108,6 +67,8 @@ class ModernButton(tk.Button):
         # Store semantic color key so future theme switches can remap reliably
         self._color_key = None
         self._hover_key = None
+        self._user_fg = user_fg  # Remember if user explicitly set fg
+        self._fg_key = None
         try:
             for k, v in COLORS.items():
                 if isinstance(v, str):
@@ -117,13 +78,12 @@ class ModernButton(tk.Button):
                         # For hover we expect key with _hover or a distinct palette entry
                         if k.endswith('_hover'):
                             self._hover_key = k
+                    # Also detect semantic fg key if user_fg matches a COLORS entry
+                    if user_fg and v.lower() == user_fg.lower():
+                        self._fg_key = k
         except Exception:
             pass
-        self._tooltip_text = tooltip
-        self._tooltip = None
         _MODERN_BUTTONS.add(self)
-        if tooltip and globals().get("TOOLTIPS_ENABLED", True):
-            self._tooltip = ToolTip(self, tooltip)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
 
@@ -154,6 +114,50 @@ class ModernButton(tk.Button):
                 self._tooltip.widget.unbind("<Leave>")
             except Exception:
                 pass
+
+    def update_colors(self, colors_map: dict):
+        """Remap button colors using stored semantic keys for theme switching."""
+        try:
+            # Remap base color if we have a semantic key
+            if self._color_key and self._color_key in colors_map:
+                self.bg_color = colors_map[self._color_key]
+            
+            # Remap hover color - prefer explicit hover key, else derive from base key
+            hover_key = self._hover_key
+            if not hover_key and self._color_key:
+                candidate = f"{self._color_key}_hover"
+                if candidate in colors_map:
+                    hover_key = candidate
+            if hover_key and hover_key in colors_map:
+                self.hover_color = colors_map[hover_key]
+            
+            # Recalculate text color based on new background
+            light_backgrounds = [
+                colors_map.get("success"),
+                colors_map.get("warning"),
+                colors_map.get("accent"),
+                colors_map.get("danger"),
+            ]
+            
+            # Determine text color
+            if self._user_fg and self._fg_key and self._fg_key in colors_map:
+                # User specified fg that maps to a semantic key - remap it
+                text_color = colors_map[self._fg_key]
+            elif not self._user_fg:
+                # Auto-calculate based on background brightness
+                text_color = colors_map.get("text_dark") if self.bg_color in light_backgrounds else colors_map.get("fg_text")
+            else:
+                # User specified fg but no semantic key found - keep as is
+                text_color = self.cget('fg')
+            
+            self.configure(
+                bg=self.bg_color,
+                fg=text_color,
+                activebackground=self.hover_color,
+                activeforeground=text_color
+            )
+        except Exception:
+            pass
 
 
 class AnimatedIconButton(ModernButton):
@@ -403,6 +407,25 @@ class ToggleSwitch(tk.Frame):
         if not self._drawing:
             self._draw()
 
+    def update_colors(self, colors_map: dict, bg_override: str = None):
+        """Update colors from the provided map and redraw."""
+        try:
+            self._on_color = colors_map.get("accent", "#4fc3f7")
+            self._off_color = colors_map.get("border", "#444444")
+            self._bg_color = bg_override if bg_override else colors_map.get("bg_root", "#1e1e1e")
+            
+            # Update container bg
+            self.configure(bg=self._bg_color)
+            
+            # Update canvas bg
+            if hasattr(self, 'canvas') and self.canvas:
+                self.canvas.configure(bg=self._bg_color)
+            
+            # Force redraw
+            self._draw()
+        except Exception:
+            pass
+
     def _draw(self):
         """Redraw the toggle switch"""
         try:
@@ -444,11 +467,14 @@ class ToggleSwitch(tk.Frame):
 
             # Draw knob
             knob_radius = radius - 2
-            knob_fill = COLORS.get("bg_root", "#1e1e1e") if is_on else COLORS.get("fg_text", "#ffffff")
+            # Use specific colors for knob if needed, or derived
+            knob_fill = self._bg_color if is_on else COLORS.get("fg_text", "#ffffff")
+            knob_outline = self._off_color
+            
             self.canvas.create_oval(
                 knob_x - knob_radius, self._padding, 
                 knob_x + knob_radius, self._padding + 2 * radius, 
-                fill=knob_fill, outline=COLORS.get("border", "#444444")
+                fill=knob_fill, outline=knob_outline
             )
         finally:
             self._drawing = False

@@ -194,6 +194,7 @@ def build_log_monitor_screen(app):
     def _auto_save_open_wounds(*args):
         try:
             enabled = bool(self.log_monitor_state.open_wounds_enabled_var.get())
+            print(f"[Slayer] Toggle changed: enabled={enabled}")
             # Slayer works independently - no need to check log monitor
             self.log_monitor_state.config["open_wounds"] = {
                 "enabled": enabled,
@@ -207,8 +208,14 @@ def build_log_monitor_screen(app):
             self._ensure_slayer_if_enabled()
             # Update slayer UI visual state
             self._update_slayer_ui_state()
-        except Exception:
-            pass
+            # Update status bar immediately
+            if hasattr(self, 'status_bar_comp') and self.status_bar_comp:
+                print(f"[Slayer] Updating status bar, config={self.log_monitor_state.config.get('open_wounds')}")
+                self.status_bar_comp.update()
+            else:
+                print(f"[Slayer] No status_bar_comp found!")
+        except Exception as e:
+            print(f"[Slayer] Error: {e}")
 
     # Trace changes
     self.log_monitor_state.open_wounds_enabled_var.trace_add("write", _auto_save_open_wounds)
@@ -220,7 +227,7 @@ def build_log_monitor_screen(app):
 
     self.ow_label = tk.Label(self.ow_ctrl, text="Auto-press F-key on 'Open Wounds Hit':", bg=COLORS["bg_root"], fg=COLORS["fg_text"])
     self.ow_label.pack(side="left", padx=(0, 10))
-    from ui.ui_base import ToggleSwitch, ToolTip
+    from ui.ui_base import ToggleSwitch
     self.ow_toggle = ToggleSwitch(self.ow_ctrl, variable=self.log_monitor_state.open_wounds_enabled_var)
     self.ow_toggle.pack(side="left", padx=(0, 15))
 
@@ -233,18 +240,17 @@ def build_log_monitor_screen(app):
     # Slayer hit counter display
     self.slayer_counter_label = tk.Label(self.ow_ctrl, text=f"Hits: {self.log_monitor_state.slayer_hit_count}", bg=COLORS["bg_root"], fg=COLORS["warning"], font=("Segoe UI", 10, "bold"))
     self.slayer_counter_label.pack(side="left", padx=(15, 5))
-    ToolTip(self.slayer_counter_label, "Number of Open Wounds auto-presses this session")
 
     # Reset counter button
     def reset_slayer_counter():
         self.log_monitor_state.slayer_hit_count = 0
         self._update_slayer_hit_counter_ui()
 
-    reset_btn = ModernButton(self.ow_ctrl, COLORS["bg_input"], COLORS["border"], text="↻", width=3, command=reset_slayer_counter, tooltip="Reset hit counter")
+    reset_btn = ModernButton(self.ow_ctrl, COLORS["bg_input"], COLORS["border"], text="↻", width=3, command=reset_slayer_counter)
     reset_btn.pack(side="left", padx=(0, 10))
 
     # Note about requirement
-    self.ow_note = tk.Label(ow_inner, text="Slayer works independently from Log Monitor", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9))
+    self.ow_note = tk.Label(ow_inner, text="Slayer functions separately from the main log monitor.", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9))
     self.ow_note.pack(anchor="w", pady=(5, 0))
 
     # Initial state update
@@ -262,11 +268,15 @@ def build_log_monitor_screen(app):
 
     def _auto_save_auto_fog(*args):
         try:
-             self.log_monitor_state.config["auto_fog"] = {
+            self.log_monitor_state.config["auto_fog"] = {
                 "enabled": bool(self.log_monitor_state.auto_fog_enabled_var.get())
             }
-             self.save_data()
-        except: pass
+            self.save_data()
+            # Update status bar immediately
+            if hasattr(self, 'status_bar_comp') and self.status_bar_comp:
+                self.status_bar_comp.update()
+        except Exception:
+            pass
 
     self.log_monitor_state.auto_fog_enabled_var.trace_add("write", _auto_save_auto_fog)
 
