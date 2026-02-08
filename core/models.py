@@ -88,6 +88,7 @@ class Profile:
     server: str = ""
     server_group: str = "siala"  # Which server group this profile uses
     is_crafter: bool = False
+    order: int = 0  # Manual ordering within category
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Profile":
@@ -100,6 +101,7 @@ class Profile:
             server=_clean_str(data.get("server", "")),
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
             is_crafter=_clean_bool(data.get("is_crafter", False)),
+            order=_clean_int(data.get("order", 0)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -247,6 +249,10 @@ class Settings:
     })
     # Saved CD keys for reuse across profiles: [{"name": "Key 1", "key": "XXXXX-..."}]
     saved_keys: List[Dict[str, str]] = field(default_factory=list)
+    minimize_to_tray: bool = True
+    run_on_startup: bool = False
+    # User-defined category order (list of category names)
+    category_order: List[str] = field(default_factory=list)
 
     @classmethod
     def defaults(cls, docs: str, exe: str) -> "Settings":
@@ -310,6 +316,9 @@ class Settings:
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
             server_groups=server_groups_raw,
             saved_keys=_clean_list(data.get("saved_keys", [])),
+            minimize_to_tray=_clean_bool(data.get("minimize_to_tray", True)),
+            run_on_startup=_clean_bool(data.get("run_on_startup", False)),
+            category_order=[_clean_str(c) for c in _clean_list(data.get("category_order", []))],
         )
 
     def to_dict(self) -> Dict[str, Any]:

@@ -52,12 +52,42 @@ class ProfileManager:
         if not self.app.profiles:
             pass
 
-        # Sort profiles by category then name
+        # Get user-defined category order or build from existing categories
+        category_order = getattr(self.app, 'category_order', [])
+        
+        # Collect all existing categories from profiles
+        existing_cats = set()
+        for p in self.app.profiles:
+            existing_cats.add(p.get("category", "General"))
+        
+        # Build final category list: keep user order for known categories, add new ones at end
+        # Ensure "General" is first if it exists and has no custom order
+        ordered_cats = []
+        for cat in category_order:
+            if cat in existing_cats:
+                ordered_cats.append(cat)
+                existing_cats.discard(cat)
+        
+        # Add remaining categories (new ones not in category_order)
+        remaining = sorted(existing_cats)
+        if "General" in remaining:
+            remaining.remove("General")
+            remaining.insert(0, "General")
+        ordered_cats.extend(remaining)
+        
+        # Update category_order with complete list
+        if hasattr(self.app, 'category_order'):
+            self.app.category_order = ordered_cats
+        
+        # Sort profiles by category order, then by profile's order field
         def sort_key(p):
             cat = p.get("category", "General")
-            name = p.get("name", "")
-            is_general = (cat == "General")
-            return (not is_general, cat, name)
+            order = p.get("order", 0)
+            try:
+                cat_idx = ordered_cats.index(cat)
+            except ValueError:
+                cat_idx = len(ordered_cats)
+            return (cat_idx, order)
 
         sorted_profiles = sorted(self.app.profiles, key=sort_key)
         
@@ -591,41 +621,142 @@ class ProfileManager:
         idx = self.app.lb.nearest(event.y)
         if idx < 0 or idx >= len(self.app.view_map):
             return
-        if self.app.view_map[idx]["type"] == "header":
-            # Toggle category on click (since drag is disabled for headers)
-            self.toggle_category(self.app.view_map[idx]["data"])
-            self.app.lb.selection_clear(0, tk.END)
-            return "break"
-        self.app.drag_data["index"] = idx
-        self.app.on_select(None)
+        
+        item = self.app.view_map[idx]
+        if item["type"] == "header":
+            # Start dragging category
+            self.app.drag_data["index"] = idx
+            self.app.drag_data["type"] = "category"
+            self.app.drag_data["category"] = item["data"]
+            return
+        elif item["type"] == "profile":
+            # Start dragging profile
+            self.app.drag_data["index"] = idx
+            self.app.drag_data["type"] = "profile"
+            self.app.drag_data["data"] = item["data"]
+            self.app.on_select(None)
+        else:
+            # Separator or unknown - ignore
+            return
     
     def on_drag_drop(self, event):
-        """Handle drag drop to reorder profile categories."""
+        """Handle drag drop to reorder profiles and categories."""
         old_idx = self.app.drag_data.get("index")
+        drag_type = self.app.drag_data.get("type")
+        drag_category = self.app.drag_data.get("category")  # Save before clearing
+        drag_profile = self.app.drag_data.get("data")  # Save before clearing
+        
         if old_idx is None:
             return
-
+        
         new_idx = self.app.lb.nearest(event.y)
+        
+        # Clear drag data
+        self.app.drag_data["index"] = None
+        self.app.drag_data["type"] = None
+        self.app.drag_data["category"] = None
+        self.app.drag_data["data"] = None
+        
         if new_idx == old_idx:
+            # No movement - toggle category if it was a category header click
+            if drag_type == "category" and drag_category:
+                self.toggle_category(drag_category)
+                self.app.lb.selection_clear(0, tk.END)
             return
-
-        target_cat = "General"
-        # Find category of target index
-        # Scan upwards from new_idx
-        start_scan = new_idx
-        if start_scan >= len(self.app.view_map):
-            start_scan = len(self.app.view_map) - 1
-            
-        for i in range(start_scan, -1, -1):
-            if i < len(self.app.view_map) and self.app.view_map[i]["type"] == "header":
+        
+        if drag_type == "category":
+            self._handle_category_drop(old_idx, new_idx, drag_category)
+        elif drag_type == "profile":
+            self._handle_profile_drop(old_idx, new_idx, drag_profile)
+    
+    def _handle_category_drop(self, old_idx, new_idx, dragged_cat):
+        """Handle dropping a category header to reorder categories."""
+        if not dragged_cat:
+            return
+        
+        # Find target category (scan upward from new_idx)
+        target_cat = None
+        for i in range(min(new_idx, len(self.app.view_map) - 1), -1, -1):
+            if self.app.view_map[i]["type"] == "header":
                 target_cat = self.app.view_map[i]["data"]
                 break
         
-        if old_idx < len(self.app.view_map):
-            profile_data = self.app.view_map[old_idx]["data"]
-            if profile_data:
-                profile_data["category"] = target_cat
-                self.app.save_data()
-                self.refresh_list()
+        if not target_cat or target_cat == dragged_cat:
+            return
         
-        self.app.drag_data["index"] = None
+        # Get current category order
+        category_order = getattr(self.app, 'category_order', [])
+        if dragged_cat not in category_order or target_cat not in category_order:
+            return
+        
+        # Remove dragged category from list
+        category_order = [c for c in category_order if c != dragged_cat]
+        
+        # Insert at new position (before or after target based on direction)
+        target_idx = category_order.index(target_cat)
+        if new_idx > old_idx:
+            # Moving down - insert after target
+            category_order.insert(target_idx + 1, dragged_cat)
+        else:
+            # Moving up - insert before target
+            category_order.insert(target_idx, dragged_cat)
+        
+        self.app.category_order = category_order
+        self.app.save_data()
+        self.refresh_list()
+    
+    def _handle_profile_drop(self, old_idx, new_idx, profile_data):
+        """Handle dropping a profile to reorder or change category."""
+        if not profile_data:
+            return
+        
+        # Find target category by scanning upward from new_idx
+        target_cat = "General"
+        for i in range(min(new_idx, len(self.app.view_map) - 1), -1, -1):
+            if self.app.view_map[i]["type"] == "header":
+                target_cat = self.app.view_map[i]["data"]
+                break
+        
+        old_cat = profile_data.get("category", "General")
+        
+        # Get all profiles in target category and their current order
+        target_profiles = [
+            p for p in self.app.profiles 
+            if p.get("category", "General") == target_cat and p is not profile_data
+        ]
+        target_profiles.sort(key=lambda p: p.get("order", 0))
+        
+        # Calculate new order value based on drop position
+        # Find position within category
+        profiles_before = 0
+        for i in range(new_idx - 1, -1, -1):
+            item = self.app.view_map[i]
+            if item["type"] == "header":
+                break
+            if item["type"] == "profile" and item["data"] is not profile_data:
+                if item["data"].get("category", "General") == target_cat:
+                    profiles_before += 1
+        
+        # Update category if changed
+        profile_data["category"] = target_cat
+        
+        # Insert at the right position and recalculate order for all profiles in category
+        target_profiles.insert(profiles_before, profile_data)
+        
+        # Reassign order values
+        for i, p in enumerate(target_profiles):
+            p["order"] = i
+        
+        # If category changed, recalculate order in old category too
+        if old_cat != target_cat:
+            old_cat_profiles = [
+                p for p in self.app.profiles 
+                if p.get("category", "General") == old_cat
+            ]
+            old_cat_profiles.sort(key=lambda p: p.get("order", 0))
+            for i, p in enumerate(old_cat_profiles):
+                p["order"] = i
+        
+        self.app.save_data()
+        self.refresh_list()
+

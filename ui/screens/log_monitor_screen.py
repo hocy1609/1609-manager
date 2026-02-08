@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from ui.ui_base import COLORS, ModernButton, ToggleSwitch
+from ui.ui_base import COLORS, ModernButton, ToggleSwitch, SectionFrame
 
 
 def build_log_monitor_screen(app):
@@ -64,7 +64,7 @@ def build_log_monitor_screen(app):
     toggle.pack(side="left")
 
     # Log path
-    path_frame = tk.LabelFrame(main, text=" Log File ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    path_frame = SectionFrame(main, text="Log File")
     path_frame.pack(fill="x", pady=(0, 15))
     path_inner = tk.Frame(path_frame, bg=COLORS["bg_root"])
     path_inner.pack(fill="x", padx=15, pady=10)
@@ -81,7 +81,7 @@ def build_log_monitor_screen(app):
     self.log_monitor_state.log_path_var.trace_add("write", _trigger_autosave)
 
     # Webhooks
-    webhooks_frame = tk.LabelFrame(main, text=" Discord Webhooks ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    webhooks_frame = SectionFrame(main, text="Discord Webhooks")
     webhooks_frame.pack(fill="x", pady=(0, 15))
     webhooks_inner = tk.Frame(webhooks_frame, bg=COLORS["bg_root"])
     webhooks_inner.pack(fill="x", padx=15, pady=8)
@@ -140,7 +140,7 @@ def build_log_monitor_screen(app):
     help_btn.pack(side="right")
 
     # Keywords
-    keywords_frame = tk.LabelFrame(main, text=" Keywords to Monitor ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    keywords_frame = SectionFrame(main, text="Keywords to Monitor")
     keywords_frame.pack(fill="x", pady=(0, 15))
     keywords_inner = tk.Frame(keywords_frame, bg=COLORS["bg_root"])
     keywords_inner.pack(fill="x", padx=15, pady=8)
@@ -179,7 +179,7 @@ def build_log_monitor_screen(app):
     tk.Label(keywords_inner, text="One keyword per line (case-insensitive)", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
 
     # --- Slayer: Open Wounds auto-press ---
-    self.ow_frame = tk.LabelFrame(main, text=" Slayer: Open Wounds ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    self.ow_frame = SectionFrame(main, text="Slayer: Open Wounds")
     self.ow_frame.pack(fill="x", pady=(0, 15))
     ow_inner = tk.Frame(self.ow_frame, bg=COLORS["bg_root"])
     ow_inner.pack(fill="x", padx=15, pady=10)
@@ -257,7 +257,7 @@ def build_log_monitor_screen(app):
     self._update_slayer_ui_state()
 
     # --- Auto-Fog Section ---
-    auto_fog_frame = tk.LabelFrame(main, text=" Auto-Fog (PvP) ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    auto_fog_frame = SectionFrame(main, text="Auto-Fog (PvP)")
     auto_fog_frame.pack(fill="x", pady=(0, 15))
     af_inner = tk.Frame(auto_fog_frame, bg=COLORS["bg_root"])
     af_inner.pack(fill="x", padx=15, pady=10)

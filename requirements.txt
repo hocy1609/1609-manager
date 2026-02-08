@@ -1,0 +1,11 @@
+# 1609 Manager - Dependencies
+# Install: pip install -r requirements.txt
+
+# System tray functionality
+pystray>=0.19.5
+
+# Image processing (required by pystray)
+Pillow>=10.0.0
+
+# Build tool (optional, for creating .exe)
+pyinstaller>=6.0.0

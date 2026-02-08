@@ -157,7 +157,10 @@ class TrayManager:
             
             return True
         except Exception as e:
-            print(f"[TrayManager] Minimize error: {e}")
+            if hasattr(self.app, 'log_error'):
+                self.app.log_error("TrayManager.minimize", e)
+            else:
+                print(f"[TrayManager] Minimize error: {e}")
             return False
     
     def restore_from_tray(self):

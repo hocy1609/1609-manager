@@ -9,6 +9,8 @@ class TitleBar:
         self.parent = parent
         self.root = app.root
         self._drag_data = {"x": 0, "y": 0}
+        self._is_maximized = False
+        self._normal_geometry = None
         
         self.frame = tk.Frame(
             self.parent,
@@ -22,6 +24,7 @@ class TitleBar:
 
         self.frame.bind("<Button-1>", self.start_move)
         self.frame.bind("<B1-Motion>", self.do_move)
+        self.frame.bind("<Double-Button-1>", lambda e: self.toggle_maximize())
 
         self.title_lbl = tk.Label(
             self.frame,
@@ -33,21 +36,59 @@ class TitleBar:
         self.title_lbl.pack(side="left", padx=15)
         self.title_lbl.bind("<Button-1>", self.start_move)
         self.title_lbl.bind("<B1-Motion>", self.do_move)
+        self.title_lbl.bind("<Double-Button-1>", lambda e: self.toggle_maximize())
 
-        # Buttons are packed from right to left: Close -> Minimize -> Settings
+        # Buttons are packed from right to left: Close -> Maximize -> Minimize
+        # Using Segoe Fluent Icons: E8BB = Close, E922/E923 = Maximize/Restore, E921 = Minimize
         self.close_btn = TitleBarButton(
-            self.frame, "✕", self.app.close_app_window, hover_color=COLORS["danger"]
+            self.frame, "\uE8BB", self.app.close_app_window, hover_color=COLORS["danger"]
         )
         self.close_btn.pack(side="right", fill="y")
 
-        self.min_btn = TitleBarButton(self.frame, "_", self.app.minimize_window)
+        self.max_btn = TitleBarButton(self.frame, "\uE922", self.toggle_maximize)
+        self.max_btn.pack(side="right", fill="y")
+
+        self.min_btn = TitleBarButton(self.frame, "\uE921", self.app.minimize_window)
         self.min_btn.pack(side="right", fill="y")
+
+    def toggle_maximize(self):
+        """Toggle between maximized and normal window state."""
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        
+        if self._is_maximized:
+            # Restore to normal size and center
+            if self._normal_geometry:
+                # Parse saved geometry "WxH+X+Y"
+                try:
+                    size_part = self._normal_geometry.split('+')[0]
+                    w, h = map(int, size_part.split('x'))
+                except:
+                    w, h = 1100, 600
+                
+                # Center on screen
+                x = (sw - w) // 2
+                y = (sh - h) // 2
+                self.root.geometry(f"{w}x{h}+{x}+{y}")
+            self.max_btn.config(text="\uE922")  # Maximize icon
+            self._is_maximized = False
+        else:
+            # Save current geometry and maximize
+            self._normal_geometry = self.root.geometry()
+            # Leave a small margin for taskbar (40px at bottom)
+            self.root.geometry(f"{sw}x{sh - 40}+0+0")
+            self.max_btn.config(text="\uE923")  # Restore icon
+            self._is_maximized = True
 
     def start_move(self, event):
         self._drag_data["x"] = event.x
         self._drag_data["y"] = event.y
 
     def do_move(self, event):
+        # If maximized, exit maximize mode on drag
+        if self._is_maximized:
+            self.toggle_maximize()
+            return
         x = self.root.winfo_x() + (event.x - self._drag_data["x"])
         y = self.root.winfo_y() + (event.y - self._drag_data["y"])
         self.root.geometry(f"+{x}+{y}")
@@ -58,6 +99,7 @@ class TitleBar:
             self.frame.config(bg=COLORS["bg_panel"])
             self.title_lbl.config(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
             self.close_btn.update_colors()
+            self.max_btn.update_colors()
             self.min_btn.update_colors()
         except Exception:
             pass
@@ -68,38 +110,80 @@ class StatusBar:
         self.app = app
         self.parent = parent
         self.labels = {}
+        self._resize_data = {"x": 0, "y": 0, "width": 0, "height": 0}
         
         self.frame = tk.Frame(self.parent, bg=COLORS["bg_panel"], height=28)
         self.frame.pack(fill="x", side="bottom")
         self.frame.pack_propagate(False)
         
-        # Left side: Sessions count
+        # Resize grip on the right corner
+        self.resize_grip = tk.Label(
+            self.frame,
+            text="⋮⋮",  # Unicode grip icon
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 10),
+            cursor="size_nw_se"
+        )
+        self.resize_grip.pack(side="right", padx=5)
+        self.resize_grip.bind("<Button-1>", self._start_resize)
+        self.resize_grip.bind("<B1-Motion>", self._do_resize)
+        
+        # Left side: Sessions count - split into icon + text for proper font rendering
         left_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"])
         left_frame.pack(side="left", padx=15, pady=4)
         
+        # Icon label with Segoe Fluent Icons
+        self._sessions_icon = tk.Label(
+            left_frame,
+            text="\uE7FC",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10)
+        )
+        self._sessions_icon.pack(side="left")
+        
+        # Text label with normal font
         self.labels["sessions"] = tk.Label(
             left_frame,
-            text="🎮 Sessions: 0",
+            text="Sessions: 0",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
             font=("Segoe UI", 9)
         )
-        self.labels["sessions"].pack(side="left")
+        self.labels["sessions"].pack(side="left", padx=(3, 0))
 
         
         # Separator
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
         
-        # Log Monitor status (clickable toggle)
+        # Log Monitor status (clickable toggle) - split into icon + text
+        log_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        log_frame.pack(side="left", padx=5)
+        
+        self._log_icon = tk.Label(
+            log_frame,
+            text="\uE9D2",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10),
+            cursor="hand2"
+        )
+        self._log_icon.pack(side="left")
+        
         self.labels["log_monitor"] = tk.Label(
-            self.frame,
-            text="📊 Log: Off",
+            log_frame,
+            text="Log: Off",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
             font=("Segoe UI", 9),
             cursor="hand2"
         )
-        self.labels["log_monitor"].pack(side="left", padx=5)
+        self.labels["log_monitor"].pack(side="left", padx=(3, 0))
+        
+        # Bind click to both icon and text
+        log_frame.bind("<Button-1>", lambda e: self._toggle_log_monitor())
+        self._log_icon.bind("<Button-1>", lambda e: self._toggle_log_monitor())
         self.labels["log_monitor"].bind("<Button-1>", lambda e: self._toggle_log_monitor())
 
         
@@ -107,62 +191,131 @@ class StatusBar:
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
         
         self._create_slayer_labels()
+    
+    def _start_resize(self, event):
+        """Start window resize from bottom-right corner."""
+        root = self.app.root
+        self._resize_data["x"] = event.x_root
+        self._resize_data["y"] = event.y_root
+        self._resize_data["width"] = root.winfo_width()
+        self._resize_data["height"] = root.winfo_height()
+    
+    def _do_resize(self, event):
+        """Handle window resize drag."""
+        root = self.app.root
+        dx = event.x_root - self._resize_data["x"]
+        dy = event.y_root - self._resize_data["y"]
+        
+        new_width = max(900, self._resize_data["width"] + dx)
+        new_height = max(500, self._resize_data["height"] + dy)
+        
+        x = root.winfo_x()
+        y = root.winfo_y()
+        root.geometry(f"{new_width}x{new_height}+{x}+{y}")
         
     def _create_slayer_labels(self):
-        # Slayer status (clickable toggle)
-        self.labels["slayer"] = tk.Label(
-            self.frame,
-            text="⚔️ Slayer: Off",
+        # Hotkeys status (clickable toggle) - E765 = Keyboard icon
+        hotkeys_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        hotkeys_frame.pack(side="left", padx=5)
+        
+        self._hotkeys_icon = tk.Label(
+            hotkeys_frame,
+            text="\uE765",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10),
+            cursor="hand2"
+        )
+        self._hotkeys_icon.pack(side="left")
+        
+        self.labels["hotkeys"] = tk.Label(
+            hotkeys_frame,
+            text="Hotkeys: Off",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
             font=("Segoe UI", 9),
             cursor="hand2"
         )
-        self.labels["slayer"].pack(side="left", padx=5)
-        self.labels["slayer"].bind("<Button-1>", lambda e: self._toggle_slayer())
-
+        self.labels["hotkeys"].pack(side="left", padx=(3, 0))
         
-        # Slayer hit counter
+        # Bind click to all parts
+        hotkeys_frame.bind("<Button-1>", lambda e: self._toggle_hotkeys())
+        self._hotkeys_icon.bind("<Button-1>", lambda e: self._toggle_hotkeys())
+        self.labels["hotkeys"].bind("<Button-1>", lambda e: self._toggle_hotkeys())
+
+        # Separator before Auto-Fog
+        tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
+        
+        # Auto-Fog status (clickable toggle) - E753 = Cloud/Weather icon
+        fog_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        fog_frame.pack(side="left", padx=5)
+        
+        self._fog_icon = tk.Label(
+            fog_frame,
+            text="\uE753",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10),
+            cursor="hand2"
+        )
+        self._fog_icon.pack(side="left")
+        
+        self.labels["auto_fog"] = tk.Label(
+            fog_frame,
+            text="Fog: Off",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 9),
+            cursor="hand2"
+        )
+        self.labels["auto_fog"].pack(side="left", padx=(3, 0))
+        
+        # Bind click to all parts
+        fog_frame.bind("<Button-1>", lambda e: self._toggle_auto_fog())
+        self._fog_icon.bind("<Button-1>", lambda e: self._toggle_auto_fog())
+        self.labels["auto_fog"].bind("<Button-1>", lambda e: self._toggle_auto_fog())
+
+        # Separator before Slayer (now at end)
+        tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
+        
+        # Slayer status (clickable toggle) - E81D = Cut/blade icon - NOW AT END
+        slayer_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        slayer_frame.pack(side="left", padx=5)
+        
+        self._slayer_icon = tk.Label(
+            slayer_frame,
+            text="\uE81D",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10),
+            cursor="hand2"
+        )
+        self._slayer_icon.pack(side="left")
+        
+        self.labels["slayer"] = tk.Label(
+            slayer_frame,
+            text="Slayer: Off",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 9),
+            cursor="hand2"
+        )
+        self.labels["slayer"].pack(side="left", padx=(3, 0))
+        
+        # Slayer hit counter (separate, normal font)
         self.labels["slayer_hits"] = tk.Label(
-            self.frame,
+            slayer_frame,
             text="(0 hits)",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
             font=("Segoe UI", 9)
         )
-        self.labels["slayer_hits"].pack(side="left", padx=(0, 5))
-
+        self.labels["slayer_hits"].pack(side="left", padx=(3, 0))
         
-        # Separator before Hotkeys
-        tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
-        
-        # Hotkeys status (clickable toggle)
-        self.labels["hotkeys"] = tk.Label(
-            self.frame,
-            text="⌨️ Hotkeys: Off",
-            bg=COLORS["bg_panel"],
-            fg=COLORS["fg_dim"],
-            font=("Segoe UI", 9),
-            cursor="hand2"
-        )
-        self.labels["hotkeys"].pack(side="left", padx=5)
-        self.labels["hotkeys"].bind("<Button-1>", lambda e: self._toggle_hotkeys())
-
-        
-        # Separator before Auto-Fog
-        tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
-        
-        # Auto-Fog status (clickable toggle)
-        self.labels["auto_fog"] = tk.Label(
-            self.frame,
-            text="🌫️ Fog: Off",
-            bg=COLORS["bg_panel"],
-            fg=COLORS["fg_dim"],
-            font=("Segoe UI", 9),
-            cursor="hand2"
-        )
-        self.labels["auto_fog"].pack(side="left", padx=5)
-        self.labels["auto_fog"].bind("<Button-1>", lambda e: self._toggle_auto_fog())
+        # Bind click to all parts
+        slayer_frame.bind("<Button-1>", lambda e: self._toggle_slayer())
+        self._slayer_icon.bind("<Button-1>", lambda e: self._toggle_slayer())
+        self.labels["slayer"].bind("<Button-1>", lambda e: self._toggle_slayer())
 
     
     def _toggle_hotkeys(self):
@@ -208,24 +361,7 @@ class StatusBar:
         """Toggle log monitor on click."""
         try:
             if hasattr(self.app, 'log_monitor_manager'):
-                # Check if running to decide toggle direction
-                # Uses the manager's logic which updates the variable
-                is_running = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
-                if is_running:
-                    self.app.log_monitor_manager.stop_log_monitor()
-                    # Also ensure the variable is synced if manager didn't (paranoid check)
-                    try:
-                        if hasattr(self.app.log_monitor_state, 'enabled_var'):
-                            self.app.log_monitor_state.enabled_var.set(False)
-                    except Exception:
-                        pass
-                else:
-                    self.app.log_monitor_manager.start_log_monitor()
-                    try:
-                        if hasattr(self.app.log_monitor_state, 'enabled_var'):
-                            self.app.log_monitor_state.enabled_var.set(True)
-                    except Exception:
-                        pass
+                self.app.log_monitor_manager.toggle_log_monitor_enabled()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_log_monitor: {e}")
     
@@ -275,82 +411,114 @@ class StatusBar:
     def update(self):
         """Update all status bar labels"""
         try:
-            # Sessions count
+            # Sessions count (text only, icon is separate)
             session_count = len(getattr(self.app.sessions, "sessions", {}) or {})
-            sessions_text = f"🎮 Sessions: {session_count}"
+            sessions_text = f"Sessions: {session_count}"
             sessions_fg = COLORS["success"] if session_count > 0 else COLORS["fg_dim"]
             self.labels["sessions"].config(text=sessions_text, fg=sessions_fg)
+            if hasattr(self, '_sessions_icon'):
+                self._sessions_icon.config(fg=sessions_fg)
             
-            # Log Monitor status
+            # Log Monitor status (text only, icon is separate)
             log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
-            log_text = "📊 Log: On" if log_on else "📊 Log: Off"
-            log_fg = COLORS["success"] if log_on else COLORS["fg_dim"]
-            self.labels["log_monitor"].config(text=log_text, fg=log_fg)
+            log_enabled = self.app.log_monitor_state.config.get("enabled", False)
             
-            # Slayer status
-            slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
-            slayer_enabled = slayer_cfg.get("enabled", False)
-            slayer_monitor_on = self.app.log_monitor_state.slayer_monitor and self.app.log_monitor_state.slayer_monitor.is_running()
-            slayer_active = slayer_enabled and (log_on or slayer_monitor_on)
-            
-            if slayer_active:
-                slayer_text = f"⚔️ Slayer: On ({slayer_cfg.get('key', 'F1')})"
-                slayer_fg = COLORS["warning"]
-            elif slayer_enabled:
-                slayer_text = "⚔️ Slayer: Waiting"
-                slayer_fg = COLORS["accent"]
+            if log_on:
+                log_text = "Log: On"
+                log_fg = COLORS["success"]
+            elif log_enabled:
+                log_text = "Log: Waiting"
+                log_fg = COLORS["accent"]
             else:
-                slayer_text = "⚔️ Slayer: Off"
-                slayer_fg = COLORS["fg_dim"]
-            self.labels["slayer"].config(text=slayer_text, fg=slayer_fg)
+                log_text = "Log: Off"
+                log_fg = COLORS["fg_dim"]
+            self.labels["log_monitor"].config(text=log_text, fg=log_fg)
+            if hasattr(self, '_log_icon'):
+                self._log_icon.config(fg=log_fg)
             
-            # Slayer hits
-            hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
-            hits_fg = COLORS["warning"] if self.app.log_monitor_state.slayer_hit_count > 0 else COLORS["fg_dim"]
-            self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
-            
-            # Hotkeys status
+            # Hotkeys status (text only, icon is separate)
             hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
             hotkeys_enabled = hotkeys_cfg.get('enabled', False)
             hotkeys_active = hasattr(self.app, 'multi_hotkey_manager') and self.app.multi_hotkey_manager._running
             
             if hotkeys_active:
                 binds_count = len([b for b in hotkeys_cfg.get('binds', []) if b.get('enabled', True)])
-                hotkeys_text = f"⌨️ Hotkeys: On ({binds_count})"
+                hotkeys_text = f"Hotkeys: On ({binds_count})"
                 hotkeys_fg = COLORS["success"]
             elif hotkeys_enabled:
-                hotkeys_text = "⌨️ Hotkeys: Waiting"
+                hotkeys_text = "Hotkeys: Waiting"
                 hotkeys_fg = COLORS["accent"]
             else:
-                hotkeys_text = "⌨️ Hotkeys: Off"
+                hotkeys_text = "Hotkeys: Off"
                 hotkeys_fg = COLORS["fg_dim"]
             self.labels["hotkeys"].config(text=hotkeys_text, fg=hotkeys_fg)
+            if hasattr(self, '_hotkeys_icon'):
+                self._hotkeys_icon.config(fg=hotkeys_fg)
             
-            # Auto-Fog status
+            # Auto-Fog status (text only, icon is separate)
             auto_fog_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
             fog_enabled = auto_fog_cfg.get("enabled", False)
-            log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
             fog_active = fog_enabled and log_on
             
             if fog_active:
-                fog_text = "🌫️ Fog: On"
+                fog_text = "Fog: On"
                 fog_fg = COLORS["success"]
             elif fog_enabled:
-                fog_text = "🌫️ Fog: Waiting"
+                fog_text = "Fog: Waiting"
                 fog_fg = COLORS["accent"]
             else:
-                fog_text = "🌫️ Fog: Off"
+                fog_text = "Fog: Off"
                 fog_fg = COLORS["fg_dim"]
             self.labels["auto_fog"].config(text=fog_text, fg=fog_fg)
+            if hasattr(self, '_fog_icon'):
+                self._fog_icon.config(fg=fog_fg)
+            
+            # Slayer status - NOW REQUIRES LOG MONITOR TO BE ON (no independent monitor)
+            # Slayer status
+            slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
+            slayer_enabled = slayer_cfg.get("enabled", False)
+            
+            # Check both main monitor and standalone slayer monitor
+            slayer_monitor_running = self.app.log_monitor_state.slayer_monitor and self.app.log_monitor_state.slayer_monitor.is_running()
+            slayer_active = slayer_enabled and (log_on or slayer_monitor_running)
+            
+            if slayer_active:
+                slayer_text = f"Slayer: On ({slayer_cfg.get('key', 'F1')})"
+                slayer_fg = COLORS["warning"]
+            elif slayer_enabled:
+                slayer_text = "Slayer: Waiting"
+                slayer_fg = COLORS["accent"]
+            else:
+                slayer_text = "Slayer: Off"
+                slayer_fg = COLORS["fg_dim"]
+            self.labels["slayer"].config(text=slayer_text, fg=slayer_fg)
+            if hasattr(self, '_slayer_icon'):
+                self._slayer_icon.config(fg=slayer_fg)
+            
+            # Slayer hits
+            hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
+            hits_fg = COLORS["warning"] if self.app.log_monitor_state.slayer_hit_count > 0 else COLORS["fg_dim"]
+            self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
         except Exception:
             pass
 
     def apply_theme(self):
         """Update colors for theme switch"""
         self.frame.config(bg=COLORS["bg_panel"])
+        if hasattr(self, 'resize_grip'):
+            self.resize_grip.config(bg=COLORS["bg_panel"], fg=COLORS["fg_dim"])
+        
+        # Update labels background
         for label in self.labels.values():
             label.config(bg=COLORS["bg_panel"])
-            # Fg will be updated by next update() call which happens every second
+        
+        # Update separate icon labels
+        for attr in ['_sessions_icon', '_log_icon', '_hotkeys_icon', '_fog_icon', '_slayer_icon']:
+            if hasattr(self, attr):
+                getattr(self, attr).config(bg=COLORS["bg_panel"])
+        
+        # Force immediate update of foregrounds
+        self.update()
 
 
 class NavigationBar:
@@ -367,13 +535,15 @@ class NavigationBar:
         self.frame = tk.Frame(self.parent, bg=COLORS["bg_panel"])
         self.frame.pack(side="left", padx=20, pady=10)
         
+        # Segoe Fluent Icons Unicode characters (Windows 11 icon font)
+        # Use "Segoe Fluent Icons" font or fallback to "Segoe MDL2 Assets"
         # (icon, text, screen, tooltip)
         btn_defs = [
-            ("🏠", "Home", "home", "Главный экран - управление аккаунтами и запуск игры"),
-            ("📊", "Log Monitor", "log_monitor", "Мониторинг лога игры"),
-            ("⌨️", "Hotkeys", "hotkeys", "Настройка горячих клавиш"),
-            ("🔨", "Craft", "craft", "Автокрафт и управление макросами"),
-            ("⚙️", "Settings", "settings", "Настройки приложения"),
+            ("\uE80F", "Home", "home", "Главный экран - управление аккаунтами и запуск игры"),
+            ("\uE9D2", "Log Monitor", "log_monitor", "Мониторинг лога игры"),
+            ("\uE765", "Hotkeys", "hotkeys", "Настройка горячих клавиш"),
+            ("\uE90F", "Craft", "craft", "Автокрафт и управление макросами"),
+            ("\uE713", "Settings", "settings", "Настройки приложения"),
         ]
         
         for icon, text, screen, tooltip_text in btn_defs:
@@ -388,12 +558,13 @@ class NavigationBar:
             btn_frame.pack(side="left", padx=2)
             
             # Icon label - accent color, same baseline
+            # Use Segoe Fluent Icons (Win11) with fallback to Segoe MDL2 Assets (Win10)
             icon_lbl = tk.Label(
                 btn_frame,
                 text=icon,
                 bg=COLORS["bg_panel"],
                 fg=COLORS["accent"],
-                font=("Segoe UI Emoji", 12),
+                font=("Segoe Fluent Icons", 14),
                 cursor="hand2",
             )
             icon_lbl.pack(side="left", padx=(0, 4), anchor="center")

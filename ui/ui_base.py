@@ -28,6 +28,9 @@ COLORS = {
     "bg_sidebar": "#282C34",
 }
 
+# Font family - uses Mona Sans with Segoe UI fallback
+FONT_FAMILY = "Mona Sans"
+
 # Tooltip global toggle and ModernButton registry
 TOOLTIPS_ENABLED = True
 _MODERN_BUTTONS = weakref.WeakSet()
@@ -260,7 +263,7 @@ class TitleBarButton(tk.Button):
             fg=fg,
             activebackground=hover,
             activeforeground=fg,
-            font=("Segoe UI", 10),
+            font=("Segoe Fluent Icons", 10),  # Use Segoe Fluent Icons for window controls
             width=5,
             cursor="hand2",
         )
@@ -518,7 +521,7 @@ class SectionFrame(tk.LabelFrame):
             text=f" {text} " if text else "",
             bg=bg,
             fg=fg,
-            font=("Segoe UI", 10, "bold"),
+            font=(FONT_FAMILY, 10, "bold"),
             bd=1,
             relief="solid",
             **kwargs
@@ -548,13 +551,17 @@ class SectionFrame(tk.LabelFrame):
                 highlightcolor=COLORS.get("accent"),
                 highlightthickness=2
             )
-        else:
-            self.configure(
-                fg=COLORS.get("fg_dim"),
-                highlightbackground=COLORS.get("border"),
-                highlightcolor=COLORS.get("border"),
-                highlightthickness=1
-            )
+
+    def update_colors(self, colors: dict):
+        """Update frame colors from new palette."""
+        try:
+            bg = colors.get("bg_root")
+            fg = colors.get("accent") if self._accent else colors.get("fg_dim")
+            self.configure(bg=bg, fg=fg)
+            highlight = colors.get("accent") if self._accent else colors.get("border")
+            self.configure(highlightbackground=highlight, highlightcolor=highlight)
+        except Exception:
+            pass
 
 
 class Separator(tk.Frame):
@@ -604,7 +611,7 @@ class SectionHeader(tk.Frame):
             text=text,
             bg=bg,
             fg=COLORS.get("fg_text"),
-            font=("Segoe UI", 12, "bold")
+            font=(FONT_FAMILY, 12, "bold")
         )
         self.label.pack(anchor="w")
         
@@ -918,7 +925,7 @@ def set_theme(name: str, root: tk.Widget | None = None):
             "TCheckbutton",
             background=COLORS["bg_root"],
             foreground=COLORS["fg_text"],
-            font=("Segoe UI", 10),
+            font=(FONT_FAMILY, 10),
             focuscolor=COLORS["bg_root"],
         )
         style.configure(

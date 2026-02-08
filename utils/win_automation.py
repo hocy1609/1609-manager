@@ -8,14 +8,63 @@ import re
 
 
 def set_dpi_awareness():
-    """Фикс DPI для Windows 10/11."""
+    """Фикс DPI для Windows 10/11. Устанавливает Per-Monitor DPI Awareness v2."""
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        # Try Per-Monitor DPI Awareness v2 (Windows 10 1703+)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         try:
-            ctypes.windll.user32.SetProcessDPIAware()
+            # Fallback to System DPI Awareness
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+
+def get_dpi_scale() -> float:
+    """Получает коэффициент масштабирования DPI для основного монитора.
+    
+    Returns:
+        float: Коэффициент масштабирования (1.0 для 100%, 1.5 для 150%, 2.0 для 200%)
+    """
+    try:
+        # Try to get DPI from the primary monitor
+        # GetDpiForSystem returns DPI value (96 = 100%, 144 = 150%, 192 = 200%)
+        try:
+            dpi = ctypes.windll.user32.GetDpiForSystem()
+            return dpi / 96.0
         except Exception:
             pass
+        
+        # Fallback: GetDeviceCaps with LOGPIXELSX (index 88)
+        try:
+            hdc = ctypes.windll.user32.GetDC(0)
+            if hdc:
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                ctypes.windll.user32.ReleaseDC(0, hdc)
+                return dpi / 96.0
+        except Exception:
+            pass
+        
+        # Last fallback: check Windows scaling via registry
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Control Panel\Desktop\WindowMetrics"
+            )
+            # AppliedDPI is the actual DPI setting
+            applied_dpi, _ = winreg.QueryValueEx(key, "AppliedDPI")
+            winreg.CloseKey(key)
+            return applied_dpi / 96.0
+        except Exception:
+            pass
+    except Exception:
+        pass
+    
+    return 1.0  # Default to no scaling
 
 
 # === WINDOWS API CONSTANTS & STRUCTURES ===
@@ -977,3 +1026,92 @@ _macro_recorder = MacroRecorder()
 
 def get_macro_recorder() -> MacroRecorder:
     return _macro_recorder
+
+
+# === CUSTOM FONT LOADING ===
+
+# Windows GDI constant for AddFontResource
+FR_PRIVATE = 0x10
+
+gdi32 = ctypes.windll.gdi32
+
+def load_custom_fonts(fonts_dir: str = None) -> list:
+    """Load custom TTF fonts from the fonts directory for this app session.
+    
+    Uses Windows GDI AddFontResourceEx to temporarily add fonts.
+    Fonts are only available to this process and are removed when app exits.
+    
+    Args:
+        fonts_dir: Path to fonts directory. Defaults to 'fonts' in app root.
+        
+    Returns:
+        List of successfully loaded font file names.
+    """
+    loaded = []
+    
+    try:
+        if fonts_dir is None:
+            # Get the app's root directory
+            import sys
+            if getattr(sys, 'frozen', False):
+                app_dir = os.path.dirname(sys.executable)
+            else:
+                app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            fonts_dir = os.path.join(app_dir, 'fonts')
+        
+        if not os.path.exists(fonts_dir):
+            print(f"[Fonts] Directory not found: {fonts_dir}")
+            return loaded
+        
+        # Load all TTF files
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().endswith('.ttf'):
+                font_path = os.path.join(fonts_dir, filename)
+                try:
+                    # AddFontResourceExW returns number of fonts loaded (0 on failure)
+                    result = gdi32.AddFontResourceExW(font_path, FR_PRIVATE, 0)
+                    if result > 0:
+                        loaded.append(filename)
+                        print(f"[Fonts] Loaded: {filename}")
+                    else:
+                        print(f"[Fonts] Failed to load: {filename}")
+                except Exception as e:
+                    print(f"[Fonts] Error loading {filename}: {e}")
+        
+        # Notify all windows about font change
+        if loaded:
+            try:
+                user32.SendMessageW(0xFFFF, 0x001D, 0, 0)  # HWND_BROADCAST, WM_FONTCHANGE
+            except Exception:
+                pass
+                
+    except Exception as e:
+        print(f"[Fonts] Error: {e}")
+    
+    return loaded
+def set_run_on_startup(enabled: bool) -> bool:
+    """Add or remove the application from Windows Startup (HKCU\\...\\Run)."""
+    try:
+        import sys
+        if getattr(sys, 'frozen', False):
+            exe_path = sys.executable
+        else:
+            # If running as script, use pythonw.exe to avoid console window if possible,
+            # or just python.exe. Correctly quoting the path is crucial.
+            exe_path = sys.executable + ' "' + os.path.abspath(sys.argv[0]) + '"'
+        
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        app_name = "NWNManager1609"
+        
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS) as key:
+            if enabled:
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+            else:
+                try:
+                    winreg.DeleteValue(key, app_name)
+                except FileNotFoundError:
+                    pass
+        return True
+    except Exception as e:
+        print(f"[StartupRegistry] Error: {e}")
+        return False

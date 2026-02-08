@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from ui.ui_base import COLORS, ModernButton, ToggleSwitch
+from ui.ui_base import COLORS, ModernButton, ToggleSwitch, SectionFrame
 
 
 def build_settings_screen(app):
@@ -80,6 +80,13 @@ def build_settings_screen(app):
             
             # UI Settings
             new_theme = self.settings_theme.get()
+            
+            # System Settings
+            if hasattr(self, 'minimize_to_tray_var'):
+                self.minimize_to_tray = self.minimize_to_tray_var.get()
+            if hasattr(self, 'run_on_startup_var'):
+                self.run_on_startup = self.run_on_startup_var.get()
+
             theme_changed = (new_theme != self.theme)
             self.theme = new_theme
             
@@ -103,7 +110,7 @@ def build_settings_screen(app):
             pass  # Invalid input, don't save
 
     # Paths section
-    paths_frame = tk.LabelFrame(content, text=" Paths ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    paths_frame = SectionFrame(content, text="Paths")
     paths_frame.pack(fill="x", pady=(0, 10))
     paths_inner = tk.Frame(paths_frame, bg=COLORS["bg_root"])
     paths_inner.pack(fill="x", padx=12, pady=8)
@@ -132,7 +139,7 @@ def build_settings_screen(app):
     left = tk.Frame(cols, bg=COLORS["bg_root"])
     left.pack(side="left", fill="both", expand=True, padx=(0, 8))
 
-    coords_frame = tk.LabelFrame(left, text=" Exit Coordinates ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    coords_frame = SectionFrame(left, text="Exit Coordinates")
     coords_frame.pack(fill="x")
     coords_inner = tk.Frame(coords_frame, bg=COLORS["bg_root"])
     coords_inner.pack(fill="x", padx=12, pady=8)
@@ -142,15 +149,57 @@ def build_settings_screen(app):
     self.settings_confirm_x = tk.StringVar(value=str(self.confirm_x))
     self.settings_confirm_y = tk.StringVar(value=str(self.confirm_y))
 
+    # Click recorder function
+    def record_click(x_var, y_var, btn):
+        """Record next mouse click position."""
+        original_text = btn.cget("text")
+        btn.config(text="Click...", state="disabled")
+        self.root.update()
+        
+        def capture():
+            try:
+                from pynput import mouse
+                
+                def on_click(x, y, button, pressed):
+                    if pressed:
+                        x_var.set(str(int(x)))
+                        y_var.set(str(int(y)))
+                        btn.config(text=original_text, state="normal")
+                        return False  # Stop listener
+                
+                listener = mouse.Listener(on_click=on_click)
+                listener.start()
+            except ImportError:
+                from tkinter import messagebox
+                messagebox.showerror("Error", "pynput not installed. Run: pip install pynput")
+                btn.config(text=original_text, state="normal")
+            except Exception as e:
+                btn.config(text=original_text, state="normal")
+                print(f"[Record] Error: {e}")
+        
+        # Run in thread to not block UI
+        import threading
+        threading.Thread(target=capture, daemon=True).start()
+
+    # Exit coordinates row
     tk.Label(coords_inner, text="Exit X:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).grid(row=0, column=0, sticky="w")
     tk.Entry(coords_inner, textvariable=self.settings_exit_x, width=8, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").grid(row=0, column=1, padx=5)
     tk.Label(coords_inner, text="Y:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).grid(row=0, column=2)
     tk.Entry(coords_inner, textvariable=self.settings_exit_y, width=8, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").grid(row=0, column=3, padx=5)
+    
+    exit_rec_btn = ModernButton(coords_inner, COLORS["accent"], COLORS["accent_hover"], text="📍", width=3, 
+                                 command=lambda: record_click(self.settings_exit_x, self.settings_exit_y, exit_rec_btn))
+    exit_rec_btn.grid(row=0, column=4, padx=(5, 0))
 
+    # Confirm coordinates row
     tk.Label(coords_inner, text="Confirm X:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).grid(row=1, column=0, sticky="w", pady=(4, 0))
     tk.Entry(coords_inner, textvariable=self.settings_confirm_x, width=8, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").grid(row=1, column=1, padx=5, pady=(4, 0))
     tk.Label(coords_inner, text="Y:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).grid(row=1, column=2, pady=(4, 0))
     tk.Entry(coords_inner, textvariable=self.settings_confirm_y, width=8, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").grid(row=1, column=3, padx=5, pady=(4, 0))
+    
+    confirm_rec_btn = ModernButton(coords_inner, COLORS["accent"], COLORS["accent_hover"], text="📍", width=3,
+                                    command=lambda: record_click(self.settings_confirm_x, self.settings_confirm_y, confirm_rec_btn))
+    confirm_rec_btn.grid(row=1, column=4, padx=(5, 0), pady=(4, 0))
 
     # Auto-save coordinates
     self.settings_exit_x.trace_add("write", auto_save)
@@ -162,7 +211,7 @@ def build_settings_screen(app):
     right = tk.Frame(cols, bg=COLORS["bg_root"])
     right.pack(side="left", fill="both", expand=True)
 
-    auto_frame = tk.LabelFrame(right, text=" Automation ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    auto_frame = SectionFrame(right, text="Automation")
     auto_frame.pack(fill="x")
     auto_inner = tk.Frame(auto_frame, bg=COLORS["bg_root"])
     auto_inner.pack(fill="x", padx=12, pady=8)
@@ -186,7 +235,7 @@ def build_settings_screen(app):
     self.settings_clip_margin.trace_add("write", auto_save)
 
     # UI Settings section (Tooltips + Theme)
-    ui_frame = tk.LabelFrame(content, text=" UI Settings ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    ui_frame = SectionFrame(content, text="UI Settings")
     ui_frame.pack(fill="x", pady=(0, 10))
     ui_inner = tk.Frame(ui_frame, bg=COLORS["bg_root"])
     ui_inner.pack(fill="x", padx=12, pady=8)
@@ -200,14 +249,44 @@ def build_settings_screen(app):
     # Auto-save UI settings
     self.settings_theme.trace_add("write", auto_save)
 
+    # System Settings
+    system_frame = SectionFrame(content, text="System")
+    system_frame.pack(fill="x", pady=(0, 10))
+    system_inner = tk.Frame(system_frame, bg=COLORS["bg_root"])
+    system_inner.pack(fill="x", padx=12, pady=8)
+
+    self.minimize_to_tray_var = tk.BooleanVar(value=getattr(self, "minimize_to_tray", True))
+    self.run_on_startup_var = tk.BooleanVar(value=getattr(self, "run_on_startup", False))
+
+    def _toggle_startup():
+        try:
+            from utils.win_automation import set_run_on_startup
+            enabled = self.run_on_startup_var.get()
+            set_run_on_startup(enabled)
+            auto_save()
+        except Exception:
+            pass
+
+    # Minimize to Tray
+    min_frame = tk.Frame(system_inner, bg=COLORS["bg_root"])
+    min_frame.pack(fill="x", pady=2)
+    tk.Label(min_frame, text="Minimize to Tray on Close:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
+    ToggleSwitch(min_frame, variable=self.minimize_to_tray_var, command=auto_save).pack(side="right")
+
+    # Run on Startup
+    startup_frame = tk.Frame(system_inner, bg=COLORS["bg_root"])
+    startup_frame.pack(fill="x", pady=2)
+    tk.Label(startup_frame, text="Run on Startup:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left")
+    ToggleSwitch(startup_frame, variable=self.run_on_startup_var, command=_toggle_startup).pack(side="right")
+
     # Data management
-    data_frame = tk.LabelFrame(content, text=" Data Management ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    data_frame = SectionFrame(content, text="Data Management")
     data_frame.pack(fill="x", pady=(0, 10))
     data_inner = tk.Frame(data_frame, bg=COLORS["bg_root"])
     data_inner.pack(fill="x", padx=12, pady=8)
 
-    ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Export Profiles", width=14, command=self.export_data).pack(side="left", padx=(0, 8))
-    ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Import Profiles", width=14, command=self.import_data).pack(side="left", padx=(0, 8))
+    ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Full Backup", width=14, command=self.export_data).pack(side="left", padx=(0, 8))
+    ModernButton(data_inner, COLORS["bg_input"], COLORS["border"], text="Restore Backup", width=14, command=self.import_data).pack(side="left", padx=(0, 8))
     ModernButton(data_inner, COLORS["success"], COLORS["success_hover"], text="Import xNwN.ini", width=14, command=self.import_xnwn_ini).pack(side="left", padx=(0, 8))
     ModernButton(data_inner, COLORS["accent"], COLORS["accent_hover"], text="Open Backups", width=14, command=self.open_restore_dialog).pack(side="left", padx=(0, 8))
     

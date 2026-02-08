@@ -38,12 +38,14 @@ def build_home_screen(app):
         font=("Segoe UI", 11, "bold"),
     ).pack(side="left")
     
+    # E710 = Add icon from Segoe Fluent Icons
     self.btn_add_profile_side = ModernButton(
         accounts_header,
         COLORS["accent"],
         COLORS["accent_hover"],
-        text="+",
+        text="\uE710",
         width=3,
+        font=("Segoe Fluent Icons", 10),
         command=self.add_profile,
         tooltip="Добавить профиль",
     )
@@ -75,27 +77,29 @@ def build_home_screen(app):
     self.inline_action_frame = tk.Frame(self.lb, bg=COLORS["bg_panel"], bd=0)
     self.inline_action_frame.place_forget()
 
+    # Edit icon - E70F (Edit)
     self.btn_edit_profile = ModernButton(
         self.inline_action_frame,
         COLORS["bg_panel"],
         COLORS["bg_input"],
-        text="🖉",
+        text="\uE70F",
         width=3,
         fg=COLORS["accent"],
-        font=("Segoe UI", 10, "bold"),
+        font=("Segoe Fluent Icons", 10),
         command=self._inline_edit_profile,
         tooltip="Редактировать выбранный профиль",
     )
     self.btn_edit_profile.pack(side="left", padx=(0, 6))
 
+    # Delete icon - E74D (Delete)
     self.btn_delete_profile_top = ModernButton(
         self.inline_action_frame,
         COLORS["bg_panel"],
         COLORS["bg_input"],
-        text="✕",
+        text="\uE74D",
         width=3,
         fg=COLORS["danger"],
-        font=("Segoe UI", 10, "bold"),
+        font=("Segoe Fluent Icons", 10),
         command=self._inline_delete_profile,
         tooltip="Удалить выбранный профиль",
     )
@@ -252,13 +256,15 @@ def build_home_screen(app):
     self.info_cdkey.pack(side="left", fill="x", expand=True)
     self.info_cdkey.config(state="readonly")
 
+    # E7B3 = View/Eye icon
     ModernButton(
         key_cont,
         COLORS["bg_root"],
         COLORS["bg_panel"],
-        text="👁",
+        text="\uE7B3",
         width=3,
         fg=COLORS["accent"],
+        font=("Segoe Fluent Icons", 10),
         command=self.toggle_key_visibility,
         tooltip="Show/Hide CD Key",
     ).pack(side="right", padx=5)
@@ -290,40 +296,46 @@ def build_home_screen(app):
 
     # Spacer removed, relies on top/bottom packing
 
-    # Bottom action bar
+    # Bottom action bar with Segoe Fluent Icons
     bottom_actions = tk.Frame(content, bg=COLORS["bg_root"])
     bottom_actions.pack(side="bottom", fill="x", pady=(5, 0)) # Reduced pady
+    
+    # E768 = Play icon
     self.btn_play = ModernButton(
         bottom_actions,
         COLORS["accent"],
         COLORS["accent_hover"],
-        text="▶",
+        text="\uE768",
         width=4,
-        font=("Segoe UI", 12, "bold"),
+        font=("Segoe Fluent Icons", 14),
         command=self.launch_game,
         tooltip="Запустить игру",
     )
     self.btn_play.pack(side="left", padx=(0, 6))
     self.ctrl_frame = tk.Frame(bottom_actions, bg=COLORS["bg_root"])
     self.ctrl_frame.pack(side="left")
+    
+    # E72C = Sync/Restart icon
     self.btn_restart = ModernButton(
         self.ctrl_frame,
         COLORS["accent"],
         COLORS["accent_hover"],
-        text="↻",
+        text="\uE72C",
         width=4,
-        font=("Segoe UI", 12, "bold"),
+        font=("Segoe Fluent Icons", 14),
         command=self.restart_game,
         tooltip="Перезапустить игру",
     )
     self.btn_restart.pack(side="left", padx=(0, 6))
+    
+    # E8BB = Close icon (same as titlebar)
     self.btn_close = ModernButton(
         self.ctrl_frame,
         COLORS["accent"],
         COLORS["accent_hover"],
-        text="✕",
+        text="\uE8BB",
         width=4,
-        font=("Segoe UI", 12, "bold"),
+        font=("Segoe Fluent Icons", 14),
         command=self.close_game,
         tooltip="Безопасный выход из игры",
     )
@@ -354,22 +366,26 @@ def build_home_screen(app):
             _create_server_buttons()
         ServerManagementDialog(self.root, self.servers, on_save)
     
+    # E710 = Add icon
     ModernButton(
         srv_header,
         COLORS["accent"],
         COLORS["accent_hover"],
-        text="+",
+        text="\uE710",
         width=3,
+        font=("Segoe Fluent Icons", 10),
         command=lambda: (self.add_server(), _create_server_buttons()),
         tooltip="Add new server",
     ).pack(side="left", padx=(10, 0))
     
+    # E70F = Edit icon
     ModernButton(
         srv_header,
         COLORS["bg_panel"],
         COLORS["border"],
-        text="✎",
+        text="\uE70F",
         width=3,
+        font=("Segoe Fluent Icons", 10),
         command=_open_server_management,
         tooltip="Manage servers (add/edit/delete)",
     ).pack(side="left", padx=(5, 0))
@@ -380,7 +396,7 @@ def build_home_screen(app):
     
     tk.Label(
         auto_connect_frame,
-        text="Auto:",
+        text="Direct:",
         bg=COLORS["bg_root"],
         fg=COLORS["fg_dim"],
         font=("Segoe UI", 9),
@@ -401,7 +417,20 @@ def build_home_screen(app):
         fg=COLORS["fg_dim"],
         font=("Segoe UI", 9),
     )
-    self.status_lbl.pack(side="right")
+    self.status_lbl.pack(side="right", padx=(5, 0))
+
+    # Manual Ping Refresh Button
+    ModernButton(
+        srv_header,
+        COLORS["bg_root"],
+        COLORS["bg_panel"],
+        text="\uE72C",  # Refresh icon
+        width=3,
+        fg=COLORS["accent"],
+        font=("Segoe Fluent Icons", 9),
+        command=self.server_manager.ping_all_servers,
+        tooltip="Refresh Server Status",
+    ).pack(side="right")
 
     # Server buttons container with scrolling if many servers
     srv_scroll_frame = tk.Frame(srv_frame, bg=COLORS["bg_root"])
@@ -526,13 +555,13 @@ def build_home_screen(app):
                 continue
             
             if lat < 0:
-                ping_text = f"{srv_name} (⚠ Off)"
+                ping_text = f"{srv_name} (❌ Off)"
             elif srv_name == best_name and len(valid_latencies) > 1:
-                ping_text = f"{srv_name} (✓ {lat}ms)"
+                ping_text = f"{srv_name} (⚡ {lat}ms)"
             elif srv_name == worst_name and len(valid_latencies) > 1:
-                ping_text = f"{srv_name} (⚠ {lat}ms)"
+                ping_text = f"{srv_name} (🐢 {lat}ms)"
             else:
-                ping_text = f"{srv_name} ({lat}ms)"
+                ping_text = f"{srv_name} (📡 {lat}ms)"
             
             if srv_btn.cget("text") != ping_text:
                 srv_btn.config(text=ping_text)

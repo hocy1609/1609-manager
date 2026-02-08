@@ -1,0 +1,17 @@
+{
+  "include": ["."],
+  "exclude": [
+    "**/__pycache__",
+    "**/build",
+    "**/dist",
+    "**/.venv"
+  ],
+  "extraPaths": ["."],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none",
+  "reportGeneralTypeIssues": "warning",
+  "reportOptionalMemberAccess": "none",
+  "reportAttributeAccessIssue": "none"
+}

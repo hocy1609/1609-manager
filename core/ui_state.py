@@ -29,16 +29,52 @@ class UIStateManager:
         root = self.app.root
         root.title("16:09 Launcher")
 
-        width, height = 1100, 600
+        # Get DPI scale factor for HiDPI displays (4K, etc.)
+        try:
+            from utils.win_automation import get_dpi_scale
+            dpi_scale = get_dpi_scale()
+        except Exception:
+            dpi_scale = 1.0
+        
+        # Clamp scale to reasonable range (1.0 - 3.0)
+        dpi_scale = max(1.0, min(3.0, dpi_scale))
+        
+        # Store for later use
+        self.app.dpi_scale = dpi_scale
+        
+        # Get screen dimensions
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         
-        # Fixed size window, centered
-        x = (sw-width)//2
-        y = (sh-height)//2
+        # Base dimensions (designed for 1080p / 100% scaling)
+        base_width, base_height = 1100, 600
+        min_width, min_height = 900, 500
+        
+        # For 4K+ displays, scale the initial window size proportionally
+        # but use a gentler curve to not make it excessively large
+        if dpi_scale > 1.5:
+            # For very high DPI, use logarithmic scaling
+            effective_scale = 1.0 + (dpi_scale - 1.0) * 0.6
+        else:
+            effective_scale = dpi_scale
+        
+        # Calculate initial window size
+        width = int(base_width * effective_scale)
+        height = int(base_height * effective_scale)
+        
+        # Ensure window fits on screen with margin
+        max_width = int(sw * 0.9)
+        max_height = int(sh * 0.85)
+        width = min(width, max_width)
+        height = min(height, max_height)
+        
+        # Center window on screen
+        x = (sw - width) // 2
+        y = (sh - height) // 2
         root.geometry(f"{width}x{height}+{x}+{y}")
         
-        # Disable resizing
-        root.resizable(False, False)
+        # Allow resizing with minimum constraints
+        root.resizable(True, True)
+        root.minsize(min_width, min_height)
         
         root.configure(bg=COLORS["bg_root"])
         root.overrideredirect(True)

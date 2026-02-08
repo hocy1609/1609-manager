@@ -1,0 +1,12 @@
+{
+  "source_directories": ["."],
+  "search_path": ["."],
+  "exclude": [
+    "**/__pycache__",
+    "**/build",
+    "**/dist",
+    "**/.venv"
+  ],
+  "strict": false,
+  "ignore_all_errors": ["ui", "core", "utils"]
+}

@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from ui.ui_base import COLORS, ModernButton
+from ui.ui_base import COLORS, ModernButton, SectionFrame
 
 
 def build_craft_screen(app):
@@ -37,7 +37,7 @@ def build_craft_screen(app):
     left_col.pack(side="left", fill="both", expand=True, padx=(0, 20))
 
     # Timing settings
-    timing_frame = tk.LabelFrame(left_col, text=" Timing ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    timing_frame = SectionFrame(left_col, text="Timing")
     timing_frame.pack(fill="x", pady=(0, 15))
     timing_inner = tk.Frame(timing_frame, bg=COLORS["bg_root"])
     timing_inner.pack(fill="x", padx=15, pady=10)
@@ -100,7 +100,7 @@ def build_craft_screen(app):
     self.favorite_potions = set(getattr(self, "_loaded_favorite_potions", []))
 
     # Craft settings - Potion selector with favorites
-    craft_settings = tk.LabelFrame(left_col, text=" Выбор зелья ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    craft_settings = SectionFrame(left_col, text="Выбор зелья")
     craft_settings.pack(fill="both", expand=True, pady=(0, 15))
     craft_inner = tk.Frame(craft_settings, bg=COLORS["bg_root"])
     craft_inner.pack(fill="both", expand=True, padx=10, pady=10)
@@ -151,7 +151,7 @@ def build_craft_screen(app):
     right_col.pack(side="left", fill="both", expand=True)
 
     # Drag Macro settings
-    drag_frame = tk.LabelFrame(right_col, text=" Drag Macro ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    drag_frame = SectionFrame(right_col, text="Drag Macro")
     drag_frame.pack(fill="x", pady=(0, 15))
     drag_inner = tk.Frame(drag_frame, bg=COLORS["bg_root"])
     drag_inner.pack(fill="x", padx=15, pady=10)
@@ -170,31 +170,37 @@ def build_craft_screen(app):
     macro_btn_row = tk.Frame(drag_inner, bg=COLORS["bg_root"])
     macro_btn_row.pack(fill="x")
 
+    # EA3B = Record icon
     self.craft_btn_record = ModernButton(
         macro_btn_row,
         COLORS["danger"],
         COLORS["danger_hover"],
-        text="🔴 RECORD",
+        text="\uEA3B RECORD",
+        font=("Segoe Fluent Icons", 10),
         command=self.craft_start_recording,
-        width=10
+        width=12
     )
     self.craft_btn_record.pack(side="left", padx=(0, 5))
 
+    # E74E = Save icon
     self.craft_btn_save_macro = ModernButton(
         macro_btn_row,
         COLORS["success"],
         COLORS["success_hover"],
-        text="💾 Save",
+        text="\uE74E Save",
+        font=("Segoe Fluent Icons", 10),
         command=self.craft_save_macro,
-        width=8
+        width=10
     )
     self.craft_btn_save_macro.pack(side="left", padx=(0, 5))
 
+    # E8BB = Close/Clear icon
     self.craft_btn_clear_macro = ModernButton(
         macro_btn_row,
         COLORS["bg_input"],
         COLORS["border"],
-        text="✕",
+        text="\uE8BB",
+        font=("Segoe Fluent Icons", 10),
         command=self.craft_clear_macro,
         width=3
     )
@@ -209,11 +215,13 @@ def build_craft_screen(app):
     self.macro_combo.pack(side="left", padx=(5, 5))
     self.macro_combo.bind("<<ComboboxSelected>>", self.craft_load_selected_macro)
 
+    # E74D = Delete icon
     self.craft_btn_delete_macro = ModernButton(
         saved_row,
         COLORS["danger"],
         COLORS["danger_hover"],
-        text="🗑",
+        text="\uE74D",
+        font=("Segoe Fluent Icons", 10),
         command=self.craft_delete_macro,
         width=3
     )
@@ -258,7 +266,7 @@ def build_craft_screen(app):
     tk.Label(speed_frame, text="Repeat:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left", padx=(20, 0))
     tk.Entry(speed_frame, textvariable=self.craft_state.vars["macro_repeats"], width=4, bg=COLORS["bg_input"], fg=COLORS["fg_text"], relief="flat").pack(side="left", padx=(5, 0))
     # Controls
-    ctrl_frame = tk.LabelFrame(right_col, text=" Controls ", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], bd=1, relief="solid")
+    ctrl_frame = SectionFrame(right_col, text="Controls")
     ctrl_frame.pack(fill="x")
     ctrl_inner = tk.Frame(ctrl_frame, bg=COLORS["bg_root"])
     ctrl_inner.pack(fill="x", padx=15, pady=15)
@@ -277,13 +285,15 @@ def build_craft_screen(app):
     btn_row = tk.Frame(ctrl_inner, bg=COLORS["bg_root"])
     btn_row.pack(fill="x")
 
+    # E768 = Play icon
     self.craft_btn_start = ModernButton(
         btn_row,
         COLORS["success"],
         COLORS["success_hover"],
-        text="▶ START",
+        text="\uE768 START",
+        font=("Segoe Fluent Icons", 10),
         command=self.craft_start,
-        width=12
+        width=14
     )
     self.craft_btn_start.pack(side="left", padx=(0, 5))
 
@@ -311,12 +321,13 @@ def build_craft_screen(app):
     )
     self.craft_btn_drag.pack(side="left")
 
-    # Settings button (gear icon)
+    # E713 = Settings icon
     self.craft_btn_settings = ModernButton(
         btn_row2,
         COLORS["bg_panel"],
         COLORS["border"],
-        text="⚙",
+        text="\uE713",
+        font=("Segoe Fluent Icons", 10),
         command=self._open_craft_settings,
         width=3
     )

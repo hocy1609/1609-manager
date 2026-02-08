@@ -15,7 +15,7 @@ from ui.dialogs import AddServerDialog
 class ServerManager:
     """Manages servers and server status checks."""
 
-    PING_INTERVAL_MS = 60000  # 60 seconds
+    PING_INTERVAL_MS = 300000  # 5 minutes
 
     def __init__(self, app):
         self.app = app
@@ -161,10 +161,24 @@ class ServerManager:
         def _ping_task(srv):
             name = srv["name"]
             ip = srv["ip"]
+            
+            # Parse host and port
+            if ":" in ip:
+                host, port_str = ip.split(":")
+                try:
+                    port = int(port_str)
+                except:
+                    port = 5121
+            else:
+                host = ip
+                port = 5121
+
+            # 1. Try ICMP Ping (Standard)
+            icmp_success = False
+            icmp_ms = -1
+            
             try:
-                host = ip.split(":")[0] if ":" in ip else ip
                 cmd = ["ping", "-n", "1", "-w", "1000", host]
-                
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 
@@ -178,21 +192,63 @@ class ServerManager:
                 dt = int((time.time() - t0) * 1000)
                 
                 if proc.returncode == 0:
+                    icmp_success = True
                     try:
                         out = proc.stdout.decode("cp866", errors="ignore")
-                        if "time=" in out: # Windows output: "time=15ms"
+                        if "time=" in out:
                             part = out.split("time=")[1]
-                            ms_str = part.split("ms")[0].strip()
-                            return name, int(ms_str)
-                        if "time<" in out:
-                            return name, 1
+                            icmp_ms = int(part.split("ms")[0].strip())
+                        elif "time<" in out:
+                            icmp_ms = 1
+                        else:
+                            icmp_ms = dt
+                    except:
+                        icmp_ms = dt
+            except:
+                pass
+
+            if icmp_success:
+                return name, icmp_ms
+
+            # 2. Try UDP Query (GameSpy v4 then v2) fallback
+            # Useful for servers blocking ICMP
+            udp_protocols = [
+                ("GS4", b'\xFE\xFD\x00\xE0\xEB\x2D\x0E'),       # GameSpy v4 (Standard)
+                ("GS2", b'\x5C\x73\x74\x61\x74\x75\x73\x5C'),   # GameSpy v2 (\status\)
+            ]
+            
+            for proto_name, payload in udp_protocols:
+                try:
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(2.0)
+                    
+                    # Connect to ensure we only get packets from this peer 
+                    # (helps with some NAT/Firewall implementations)
+                    try:
+                        sock.connect((host, port))
+                    except:
+                        pass # If connect fails, try sendto/recvfrom
+
+                    t0 = time.time()
+                    
+                    if sock.getpeername(): # If connected
+                        sock.send(payload)
+                        sock.recv(2048)
+                    else:
+                        sock.sendto(payload, (host, port))
+                        sock.recvfrom(2048)
+                        
+                    dt = int((time.time() - t0) * 1000)
+                    sock.close()
+                    return name, dt
+                except:
+                    try:
+                        sock.close()
                     except:
                         pass
-                    return name, dt
-                else:
-                    return name, -1 # Offline
-            except:
-                return name, -1
+            
+            return name, -1
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             if not hasattr(self.app, 'servers'):

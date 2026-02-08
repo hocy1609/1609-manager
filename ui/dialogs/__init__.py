@@ -6,3 +6,4 @@ from .server_dialog import AddServerDialog, ServerManagementDialog
 from .backup_dialog import RestoreBackupDialog
 from .log_dialog import LogMonitorDialog
 from .key_dialog import AddKeyDialog, KeyManagementDialog
+from .selective_restore_dialog import SelectiveRestoreDialog

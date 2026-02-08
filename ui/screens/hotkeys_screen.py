@@ -37,14 +37,17 @@ def build_hotkeys_screen(app):
     def _add_hotkey():
         _open_hotkey_dialog(None)
 
-    ModernButton(
+    # E710 = Add icon from Segoe Fluent Icons
+    add_btn = ModernButton(
         header_right, 
         COLORS["success"], 
         COLORS["success_hover"], 
-        text="➕ Add New", 
-        width=12, 
+        text="\uE710 Add New", 
+        width=12,
+        font=("Segoe Fluent Icons", 10),
         command=_add_hotkey
-    ).pack(side="left", padx=(0, 20))
+    )
+    add_btn.pack(side="left", padx=(0, 20))
 
     # Separator in header
     tk.Frame(header_right, width=1, height=24, bg=COLORS["fg_dim"]).pack(side="left", padx=(0, 20))
@@ -211,14 +214,16 @@ def build_hotkeys_screen(app):
                 _save_hotkeys_config()
                 _apply_hotkeys()
 
+        # E70F = Edit icon
         ModernButton(
             actions_frame, COLORS.get("btn_bg", "#444444"), COLORS.get("btn_hover", "#555555"), 
-            text="✏️", width=3, command=_edit_this
+            text="\uE70F", width=3, font=("Segoe Fluent Icons", 10), command=_edit_this
         ).pack(side="left", padx=2)
         
+        # E74D = Delete icon
         ModernButton(
             actions_frame, COLORS["danger"], COLORS["danger_hover"], 
-            text="🗑️", width=3, command=_delete_this
+            text="\uE74D", width=3, font=("Segoe Fluent Icons", 10), command=_delete_this
         ).pack(side="left", padx=2)
 
     def _save_hotkeys_config():

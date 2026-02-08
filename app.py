@@ -31,6 +31,7 @@ from utils.win_automation import (
     safe_exit_sequence,
     get_hwnd_from_pid,
     KEYEVENTF_KEYUP,
+    load_custom_fonts,
 )
 from utils.log_monitor import LogMonitor
 from core.models import (
@@ -89,6 +90,7 @@ def configure_logging(log_path: str) -> None:
 
 
 set_dpi_awareness()
+load_custom_fonts()  # Load Mona Sans fonts
 
 
 @dataclass
@@ -366,10 +368,21 @@ class NWNManagerApp:
             self.ui_state_manager.minimize_window()
 
     def close_app_window(self):
-        # Minimize to tray instead of closing
-        if hasattr(self, 'tray_manager') and self.tray_manager.is_available():
+        # Minimize to tray if enabled
+        should_minimize = getattr(self, "minimize_to_tray", True)
+        
+        # Debug logging for tray issues
+        if not hasattr(self, 'tray_manager'):
+             self.log_error("close_window", Exception("No tray_manager"))
+        elif not self.tray_manager.is_available():
+             # Only log if we expect it to be available (minimize is on)
+             if should_minimize:
+                self.log_error("close_window", Exception("Tray manager not available (Import failed?)"))
+
+        if should_minimize and hasattr(self, 'tray_manager') and self.tray_manager.is_available():
             if self.tray_manager.minimize_to_tray():
                 return
+        
         # Fallback: actually close
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.close_app_window()
@@ -509,6 +522,10 @@ class NWNManagerApp:
         self.show_tooltips = settings.show_tooltips
         self.theme = settings.theme
         self._loaded_favorite_potions = settings.favorite_potions
+        
+        self.minimize_to_tray = settings.minimize_to_tray
+        self.run_on_startup = settings.run_on_startup
+        self.category_order = list(settings.category_order)  # User-defined category order
 
         try:
             import ui.ui_base as _uib
@@ -611,7 +628,18 @@ class NWNManagerApp:
                 server_group=getattr(self, "server_group", "siala"),
                 server_groups=getattr(self, "server_groups", {}),
                 saved_keys=getattr(self, "saved_keys", []),
+                minimize_to_tray=getattr(self, "minimize_to_tray", True),
+                run_on_startup=getattr(self, "run_on_startup", False),
+                category_order=getattr(self, "category_order", []),
             )
+            
+            # Sync startup registry (failsafe)
+            try:
+                from utils.win_automation import set_run_on_startup
+                set_run_on_startup(getattr(self, "run_on_startup", False))
+            except Exception:
+                pass
+                
             save_settings(self.settings_path, settings)
         except Exception as e:
             self.log_error("save_data", e)
@@ -681,6 +709,8 @@ class NWNManagerApp:
                 "favorite_potions": list(getattr(self, "favorite_potions", set())),
                 "server_group": getattr(self, "server_group", "siala"),
                 "saved_keys": getattr(self, "saved_keys", []),
+                "minimize_to_tray": getattr(self, "minimize_to_tray", True),
+                "run_on_startup": getattr(self, "run_on_startup", False),
             }
         }
 
@@ -697,11 +727,14 @@ class NWNManagerApp:
             messagebox.showerror("Export Error", str(e), parent=parent)
 
     def import_data(self, parent=None):
+        """Import backup data with selective restore dialog."""
+        from ui.dialogs import SelectiveRestoreDialog
+        
         parent = parent or self.root
 
         f = filedialog.askopenfilename(
             filetypes=[("JSON Files", "*.json")],
-            title="Import Profiles from File",
+            title="Restore Backup",
             parent=parent,
         )
         if not f:
@@ -709,85 +742,45 @@ class NWNManagerApp:
 
         try:
             with open(f, "r", encoding="utf-8") as infile:
-                new_data = json.load(infile)
-
-            new_profiles = new_data.get("profiles", [])
-            if not new_profiles:
-                if isinstance(new_data, list):
-                    new_profiles = new_data
-                else:
-                    messagebox.showerror(
-                        "Error", "No profiles found in this file.", parent=parent
-                    )
-                    return
-
-            count = len(new_profiles)
-            action = messagebox.askyesnocancel(
-                "Import",
-                (
-                    f"Found {count} profiles.\n\n"
-                    "YES: Replace current list (Delete existing)\n"
-                    "NO: Merge (Add to existing)\n"
-                    "CANCEL: Abort"
-                ),
-                parent=parent,
-            )
-            if action is None:
-                return
-
-            if action:
-                self.profiles = new_profiles
-            else:
-                existing_keys = {
-                    p.get("cdKey") for p in self.profiles if p.get("cdKey")
-                }
-                added = 0
-                for p in new_profiles:
-                    if p.get("cdKey") and p.get("cdKey") not in existing_keys:
-                        self.profiles.append(p)
-                        added += 1
-                messagebox.showinfo("Merge", f"Added {added} new profiles.", parent=parent)
-
-            new_servers = new_data.get("servers", [])
-            if new_servers:
-                existing_names = {s["name"] for s in self.servers}
-                for s in new_servers:
-                    if s["name"] not in existing_names and s.get("ip"):
-                        self.servers.append(s)
-
-            # Дополнительно чистим старый "Без авто-подключения (Меню)"
-            self.servers = [
-                s
-                for s in self.servers
-                if s.get("ip")
-                and s.get("name") != "Без авто-подключения (Меню)"
-            ]
-
-            # Import Settings & Hotkeys if present
-            if "app_settings" in new_data or "hotkeys" in new_data:
-                if messagebox.askyesno(
-                    "Import Settings",
-                    "Backup contains Application Settings and Hotkeys.\n\nDo you want to import them?\nThis will overwrite your current configuration (Theme, Paths, Hotkeys, etc).",
-                    parent=parent
-                ):
-                    # Import Hotkeys
-                    if "hotkeys" in new_data:
-                        self.hotkeys_config = new_data["hotkeys"]
-                        # Re-register if enabled
+                backup_data = json.load(infile)
+            
+            # Check if it's a valid backup or legacy profiles-only file
+            if isinstance(backup_data, list):
+                # Legacy format: just a list of profiles
+                backup_data = {"profiles": backup_data, "version": "legacy"}
+            
+            def on_restore(selected_data: dict):
+                """Apply selected data categories."""
+                try:
+                    # Restore Profiles
+                    if "profiles" in selected_data:
+                        self.profiles = selected_data["profiles"]
+                    
+                    # Restore Servers
+                    if "servers" in selected_data:
+                        self.servers = selected_data["servers"]
+                        # Clean up invalid entries
+                        self.servers = [
+                            s for s in self.servers
+                            if s.get("ip") and s.get("name") != "Без авто-подключения (Меню)"
+                        ]
+                    
+                    # Restore Hotkeys
+                    if "hotkeys" in selected_data:
+                        self.hotkeys_config = selected_data["hotkeys"]
                         if self.hotkeys_config.get("enabled", False):
                             self._apply_saved_hotkeys()
                         else:
                             if hasattr(self, 'multi_hotkey_manager'):
                                 self.multi_hotkey_manager.unregister_all()
-
-                    # Import Log Monitor Config
-                    if "log_monitor" in new_data:
-                        self.log_monitor_state.config = new_data["log_monitor"]
-                        # Refresh UI state if needed (toggle switches will update on next refresh/load)
                     
-                    # Import General Settings
-                    app_settings = new_data.get("app_settings", {})
-                    if app_settings:
+                    # Restore Log Monitor
+                    if "log_monitor" in selected_data:
+                        self.log_monitor_state.config = selected_data["log_monitor"]
+                    
+                    # Restore App Settings
+                    if "app_settings" in selected_data:
+                        app_settings = selected_data["app_settings"]
                         self.theme = app_settings.get("theme", self.theme)
                         self.use_server_var.set(app_settings.get("auto_connect", False))
                         self.doc_path_var.set(app_settings.get("doc_path", self.doc_path_var.get()))
@@ -802,26 +795,36 @@ class NWNManagerApp:
                         self.clip_margin = app_settings.get("clip_margin", self.clip_margin)
                         
                         self._loaded_favorite_potions = set(app_settings.get("favorite_potions", []))
-                        self.favorite_potions = self._loaded_favorite_potions # Ensure runtime set is updated
-                        
+                        self.favorite_potions = self._loaded_favorite_potions
                         self.server_group = app_settings.get("server_group", self.server_group)
                         
-                        # Merge saved keys (don't delete existing ones, just add new unique ones)
-                        imported_keys = app_settings.get("saved_keys", [])
-                        if imported_keys:
-                            existing_key_values = {k.get("key") for k in self.saved_keys}
-                            for key_entry in imported_keys:
-                                if key_entry.get("key") not in existing_key_values:
-                                    self.saved_keys.append(key_entry)
-
+                        self.minimize_to_tray = app_settings.get("minimize_to_tray", getattr(self, "minimize_to_tray", True))
+                        self.run_on_startup = app_settings.get("run_on_startup", getattr(self, "run_on_startup", False))
+                        
                         # Apply Theme immediately
                         if hasattr(self, 'theme_manager'):
-                            self.theme_manager.set_theme(self.theme)
-                            self.apply_theme()
-
-            self.save_data()
-            self.refresh_list()
-            self.refresh_server_list()
+                            self.theme_manager.apply_theme()
+                    
+                    # Restore CD Keys
+                    if "saved_keys" in selected_data:
+                        self.saved_keys = selected_data["saved_keys"]
+                    
+                    self.save_data()
+                    self.refresh_list()
+                    self.refresh_server_list()
+                    
+                    messagebox.showinfo(
+                        "Restore Complete",
+                        "Selected data has been restored successfully!",
+                        parent=parent,
+                    )
+                except Exception as e:
+                    self.log_error("import_data.on_restore", e)
+                    raise
+            
+            # Open selective restore dialog
+            SelectiveRestoreDialog(parent, backup_data, on_restore)
+            
         except Exception as e:
             self.log_error("import_data", e)
             messagebox.showerror(
@@ -1169,14 +1172,15 @@ class NWNManagerApp:
 
     def _on_sessions_started(self):
         """Called when game sessions appear (went from 0 to >0).
-        Auto-enables log monitor, hotkeys, and auto-fog.
+        Starts log monitor if it was enabled (waiting for game).
+        Also applies saved hotkeys.
         """
         try:
-            print("[Auto] Enabling log monitor...")
-            # Start log monitor
+            # Start log monitor if it was enabled (waiting for game)
             if hasattr(self, 'log_monitor_manager'):
-                self.log_monitor_state.config["enabled"] = True
-                self.log_monitor_manager.start_log_monitor()
+                if self.log_monitor_state.config.get("enabled", False):
+                    print("[Auto] Starting log monitor (was waiting for game)...")
+                    self.log_monitor_manager.start_log_monitor()
             
             # Apply saved hotkeys
             print("[Auto] Applying saved hotkeys...")
@@ -1187,22 +1191,24 @@ class NWNManagerApp:
 
     def _on_sessions_ended(self):
         """Called when all game sessions end (went from >0 to 0).
-        Auto-disables log monitor, hotkeys, and unregisters them.
+        Stops log monitor (but keeps it enabled for next session).
+        Unregisters hotkeys.
         """
         try:
-            print("[Auto] Disabling log monitor...")
-            # Stop log monitor
+            # Stop log monitor thread but keep enabled config (will wait for next game)
             if hasattr(self, 'log_monitor_manager'):
                 if self.log_monitor_state.monitor and self.log_monitor_state.monitor.is_running():
+                    print("[Auto] Stopping log monitor (waiting for next game)...")
                     self.log_monitor_manager.stop_log_monitor()
-                self.log_monitor_state.config["enabled"] = False
+                # Keep config enabled - just update UI to show "waiting" status
+                if self.log_monitor_state.config.get("enabled", False):
+                    self.log_monitor_manager.update_log_monitor_status_label(waiting=True)
             
             # Unregister hotkeys
             print("[Auto] Unregistering hotkeys...")
             if hasattr(self, 'multi_hotkey_manager'):
                 self.multi_hotkey_manager.unregister_all()
             
-            self.save_data()
         except Exception as e:
             self.log_error("_on_sessions_ended", e)
 

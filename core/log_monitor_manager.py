@@ -106,29 +106,19 @@ class LogMonitorManager:
             )
 
     def start_log_monitor(self):
-        """Start the log monitor if a game is running."""
-        from tkinter import messagebox
-        
-        # Prevent starting monitor if no game is running
+        """Start the log monitor (waits for game if not running)."""
+        # Check if game is running
         try:
             has_sessions = bool(getattr(self.app.sessions, "sessions", None))
         except Exception:
             has_sessions = False
 
         if not has_sessions:
-            try:
-                messagebox.showinfo(
-                    "Log Monitor",
-                    "Cannot start log monitor: no running game detected.",
-                    parent=self.app.root,
-                )
-            except Exception:
-                pass
+            # No game running - mark as enabled but waiting
             try:
                 if self.app.log_monitor_state.enabled_var:
-                    self.app.log_monitor_state.enabled_var.set(False)
-                self.app.log_monitor_state.config["enabled"] = False
-                self.update_log_monitor_status_label()
+                    self.app.log_monitor_state.enabled_var.set(True)
+                self.update_log_monitor_status_label(waiting=True)
             except Exception:
                 pass
             return
@@ -225,13 +215,18 @@ class LogMonitorManager:
         except Exception as e:
             self.app.log_error("_stop_slayer_monitor", e)
 
-    def update_log_monitor_status_label(self):
+    def update_log_monitor_status_label(self, waiting: bool = False):
         """Update the log monitor status indicator in UI."""
         try:
             running = self.app.log_monitor_state.monitor.is_running() if self.app.log_monitor_state.monitor else False
+            enabled = self.app.log_monitor_state.config.get("enabled", False)
+            
             if running:
                 text = "● Running"
                 fg = COLORS.get("success", "#00a000")
+            elif waiting or (enabled and not running):
+                text = "● Waiting for game"
+                fg = COLORS.get("accent", "#4a9eff")
             else:
                 text = "● Stopped"
                 fg = COLORS.get("fg_dim", "#888888")
@@ -739,36 +734,22 @@ class LogMonitorManager:
         )
 
     def toggle_log_monitor_enabled(self):
-        """Toggle log monitor on/off from UI."""
-        from tkinter import messagebox
-        
+        """Toggle log monitor on/off from UI or StatusBar."""
         try:
+            # Determine current state and toggle
             enabled_var = self.app.log_monitor_state.enabled_var
-            if not enabled_var:
-                return
-            enabled = bool(enabled_var.get())
-            # If user tries to enable but no game is running — prevent it
-            if enabled:
-                has_sessions = bool(getattr(self.app.sessions, "sessions", None))
-                if not has_sessions:
-                    try:
-                        messagebox.showinfo(
-                            "Log Monitor",
-                            "Cannot enable log monitor: no running game detected.",
-                            parent=self.app.root,
-                        )
-                    except Exception:
-                        pass
-                    # Revert checkbox and do not save
-                    try:
-                        enabled_var.set(False)
-                    except Exception:
-                        pass
-                    return
-
+            
+            if enabled_var:
+                new_state = not enabled_var.get()
+                enabled_var.set(new_state)
+            else:
+                current_config_state = self.app.log_monitor_state.config.get("enabled", False)
+                new_state = not current_config_state
+            
             # Persist desired state
-            self.app.log_monitor_state.config["enabled"] = enabled
-            self.app.log_monitor_state.config["enabled"] = enabled
+            self.app.log_monitor_state.config["enabled"] = new_state
+            
+            # Save data (debounced or immediate)
             if hasattr(self.app, 'schedule_save'):
                 self.app.schedule_save()
             else:
@@ -777,7 +758,7 @@ class LogMonitorManager:
             # Update or create monitor
             self.ensure_log_monitor()
 
-            if enabled:
+            if new_state:
                 self.start_log_monitor()
             else:
                 self.stop_log_monitor()
@@ -790,23 +771,7 @@ class LogMonitorManager:
         from ui.dialogs import LogMonitorDialog
         
         def on_save_config(cfg: dict):
-            try:
-                want_enabled = bool(cfg.get("enabled", False))
-            except Exception:
-                want_enabled = False
-
-            if want_enabled:
-                has_sessions = bool(getattr(self.app.sessions, "sessions", None))
-                if not has_sessions:
-                    try:
-                        messagebox.showinfo(
-                            "Log Monitor",
-                            "Cannot enable log monitor: no running game detected.",
-                            parent=self.app.root,
-                        )
-                    except Exception:
-                        pass
-                    cfg["enabled"] = False
+            pass  # No longer need to check for running game - will wait for game to start
 
             # Save settings
             self.app.log_monitor_state.config.update(cfg)
