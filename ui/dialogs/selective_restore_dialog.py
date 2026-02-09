@@ -20,7 +20,7 @@ class SelectiveRestoreDialog(BaseDialog):
             backup_data: Dictionary containing backup data to restore
             on_restore: Callback function (selected_categories: dict) -> None
         """
-        super().__init__(parent, "Restore Backup", 500, 560)
+        super().__init__(parent, "Restore Backup", 500, 640)
         self.backup_data = backup_data
         self.on_restore = on_restore
         self.category_vars = {}
@@ -213,14 +213,50 @@ class SelectiveRestoreDialog(BaseDialog):
             command=select_none,
         ).pack(side="left")
         
-        # Warning note - E7BA = Warning icon
-        tk.Label(
-            content,
-            text="\uE7BA Selected categories will replace current data",
-            bg=COLORS["bg_root"],
-            fg=COLORS["warning"],
-            font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(5, 10))
+        # Merge / Overwrite mode for profiles
+        self.merge_var = tk.StringVar(value="overwrite")
+        has_profiles = any(c["key"] == "profiles" for c in self.categories)
+        
+        if has_profiles:
+            mode_frame = tk.LabelFrame(
+                content,
+                text=" Import Mode (Profiles) ",
+                bg=COLORS["bg_root"],
+                fg=COLORS["fg_dim"],
+                bd=1,
+                relief="solid",
+            )
+            mode_frame.pack(fill="x", pady=(5, 10))
+            mode_inner = tk.Frame(mode_frame, bg=COLORS["bg_root"])
+            mode_inner.pack(fill="x", padx=12, pady=8)
+            
+            tk.Radiobutton(
+                mode_inner,
+                text="Overwrite — replace all profiles",
+                variable=self.merge_var,
+                value="overwrite",
+                bg=COLORS["bg_root"],
+                fg=COLORS["fg_text"],
+                activebackground=COLORS["bg_root"],
+                activeforeground=COLORS["fg_text"],
+                selectcolor=COLORS["bg_input"],
+                highlightthickness=0,
+                font=("Segoe UI", 9),
+            ).pack(anchor="w")
+            
+            tk.Radiobutton(
+                mode_inner,
+                text="Merge — only add missing profiles",
+                variable=self.merge_var,
+                value="merge",
+                bg=COLORS["bg_root"],
+                fg=COLORS["fg_text"],
+                activebackground=COLORS["bg_root"],
+                activeforeground=COLORS["fg_text"],
+                selectcolor=COLORS["bg_input"],
+                highlightthickness=0,
+                font=("Segoe UI", 9),
+            ).pack(anchor="w")
         
         # Bottom buttons
         bottom_frame = tk.Frame(content, bg=COLORS["bg_root"])
@@ -272,6 +308,9 @@ class SelectiveRestoreDialog(BaseDialog):
             if selected.get(cat["key"], False):
                 restore_data[cat["key"]] = cat["data"]
         
+        # Pass merge flag
+        restore_data["_merge"] = (self.merge_var.get() == "merge")
+        
         # Count what will be restored
         items = []
         if "profiles" in restore_data:
@@ -288,10 +327,12 @@ class SelectiveRestoreDialog(BaseDialog):
             items.append(f"{len(restore_data['saved_keys'])} CD keys")
         
         summary = ", ".join(items) if items else "selected data"
+        mode_text = "Merge missing items into" if self.merge_var.get() == "merge" else "Replace with"
+        bullet_list = "\n".join("• " + i for i in items) if items else "Nothing selected"
         
         if messagebox.askyesno(
             "Confirm Restore",
-            f"Restore the following data?\n\n• {chr(10).join('• ' + i for i in items) if items else 'Nothing selected'}\n\nThis will replace your current settings.",
+            f"{mode_text} the following data?\n\n{bullet_list}",
             parent=self,
         ):
             try:

@@ -279,11 +279,11 @@ class StatusBar:
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
         
         # Slayer status (clickable toggle) - E81D = Cut/blade icon - NOW AT END
-        slayer_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
-        slayer_frame.pack(side="left", padx=5)
+        self.slayer_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        self.slayer_frame.pack(side="left", padx=5)
         
         self._slayer_icon = tk.Label(
-            slayer_frame,
+            self.slayer_frame,
             text="\uE81D",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
@@ -293,7 +293,7 @@ class StatusBar:
         self._slayer_icon.pack(side="left")
         
         self.labels["slayer"] = tk.Label(
-            slayer_frame,
+            self.slayer_frame,
             text="Slayer: Off",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
@@ -304,7 +304,7 @@ class StatusBar:
         
         # Slayer hit counter (separate, normal font)
         self.labels["slayer_hits"] = tk.Label(
-            slayer_frame,
+            self.slayer_frame,
             text="(0 hits)",
             bg=COLORS["bg_panel"],
             fg=COLORS["fg_dim"],
@@ -313,7 +313,7 @@ class StatusBar:
         self.labels["slayer_hits"].pack(side="left", padx=(3, 0))
         
         # Bind click to all parts
-        slayer_frame.bind("<Button-1>", lambda e: self._toggle_slayer())
+        self.slayer_frame.bind("<Button-1>", lambda e: self._toggle_slayer())
         self._slayer_icon.bind("<Button-1>", lambda e: self._toggle_slayer())
         self.labels["slayer"].bind("<Button-1>", lambda e: self._toggle_slayer())
 
@@ -499,8 +499,27 @@ class StatusBar:
             hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
             hits_fg = COLORS["warning"] if self.app.log_monitor_state.slayer_hit_count > 0 else COLORS["fg_dim"]
             self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
+            self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
         except Exception:
             pass
+
+    def set_slayer_visibility(self, visible: bool):
+        """Show or hide the Slayer configuration section in status bar."""
+        try:
+            # Check if we have the frames/widgets
+            # We need the parent frame of slayer labels
+            # In __init__, we created slayer_frame
+            
+            # Since we didn't store slayer_frame in self, we need to find it or refactor __init__ to store it.
+            # Looking at __init__ code I saw earlier, slayer_frame is a local variable.
+            # I should first refactor __init__ to store self.slayer_frame.
+            if hasattr(self, 'slayer_frame'):
+                 if visible:
+                     self.slayer_frame.pack(side="left", padx=5)
+                 else:
+                     self.slayer_frame.pack_forget()
+        except Exception as e:
+            print(f"Error setting slayer visibility: {e}")
 
     def apply_theme(self):
         """Update colors for theme switch"""

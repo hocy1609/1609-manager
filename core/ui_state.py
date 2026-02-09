@@ -162,6 +162,49 @@ class UIStateManager:
         self.app.root.option_add("*TCombobox*Listbox.selectBackground", COLORS["accent"])
         self.app.root.option_add("*TCombobox*Listbox.selectForeground", COLORS["text_dark"])
 
+        # Treeview Styles
+        style.configure(
+            "ProfileList.Treeview",
+            background=COLORS["bg_panel"],
+            foreground=COLORS["fg_text"],
+            fieldbackground=COLORS["bg_panel"],
+            borderwidth=0,
+            font=("Segoe UI", 11),
+            rowheight=28
+        )
+        style.map(
+            "ProfileList.Treeview",
+            background=[("selected", COLORS["accent"])],
+            foreground=[("selected", COLORS["text_dark"])]
+        )
+        style.configure(
+            "ProfileList.Treeview.Heading",
+            background=COLORS["bg_panel"],
+            foreground=COLORS["fg_dim"],
+            font=("Segoe UI", 9, "bold"),
+            relief="flat"
+        )
+        style.map("ProfileList.Treeview.Heading",
+            background=[("active", COLORS["bg_panel"])],
+            foreground=[("active", COLORS["accent"])]
+        )
+        
+        
+        # Remove default border from Treeview layout
+        style.layout("ProfileList.Treeview", [('ProfileList.Treeview.treearea', {'sticky': 'nswe'})])
+
+        # Add visual separation between items (borders)
+        style.configure(
+            "ProfileList.Treeview.Item",
+            borderwidth=1,
+            bordercolor=COLORS["border"], # Use distinct border color as separator
+            relief="solid"
+        )
+        style.map(
+            "ProfileList.Treeview.Item",
+            bordercolor=[("selected", COLORS["accent"])]
+        )
+
     def set_appwindow(self):
         from utils.win_automation import user32, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW
 
@@ -197,6 +240,15 @@ class UIStateManager:
     def close_app_window(self):
         self.app.root.destroy()
 
+    # Screen builder mapping for lazy loading
+    _SCREEN_BUILDERS = {
+        "home": "create_home_screen",
+        "craft": "create_craft_screen",
+        "hotkeys": "create_hotkeys_screen",
+        "settings": "create_settings_screen",
+        "log_monitor": "create_log_monitor_screen",
+    }
+
     def create_ui(self):
         """Build main UI layout."""
         app = self.app
@@ -222,13 +274,8 @@ class UIStateManager:
         app.content_frame = tk.Frame(main_container, bg=COLORS["bg_root"])
         app.content_frame.pack(fill="both", expand=True)
 
-
-        # Create all screens
+        # Create home screen immediately (most used), others loaded lazily
         self.create_home_screen()
-        self.create_craft_screen()
-        self.create_hotkeys_screen()
-        self.create_settings_screen()
-        self.create_log_monitor_screen()
 
         # Show home by default
         self.show_screen("home")
@@ -259,14 +306,24 @@ class UIStateManager:
             self.app.content_frame = None
             self.app.screens = {}
             
-            # 4. Re-create UI
+            # 4. Re-apply ttk styles with new COLORS
+            self.setup_styles()
+            self.app.root.configure(bg=COLORS["bg_root"])
+            
+            # 5. Re-create UI
             # This uses the CURRENT global COLORS (which should have been updated by set_theme)
             self.create_ui()
             
-            # 5. Restore screen
+            # 6. Restore screen
             self.show_screen(current_screen)
             
-            # 6. Force immediate update
+            # 7. Repopulate data-driven widgets
+            if hasattr(self.app, 'profile_manager'):
+                self.app.profile_manager.refresh_list()
+            if hasattr(self.app, '_create_server_buttons'):
+                self.app._create_server_buttons()
+            
+            # 8. Force immediate update
             self.app.root.update_idletasks()
             
         except Exception as e:
@@ -307,9 +364,17 @@ class UIStateManager:
             btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
 
     def show_screen(self, screen_name):
-        """Switch to specified screen instantly."""
+        """Switch to specified screen instantly. Lazily creates screen if needed."""
+        # Lazy-load screen if not yet created
         if screen_name not in self.app.screens:
-            return
+            builder_name = self._SCREEN_BUILDERS.get(screen_name)
+            if builder_name:
+                builder_method = getattr(self, builder_name, None)
+                if builder_method:
+                    builder_method()
+            # If still not created, bail
+            if screen_name not in self.app.screens:
+                return
         
         new_screen = self.app.screens.get(screen_name)
         

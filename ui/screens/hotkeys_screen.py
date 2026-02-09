@@ -149,9 +149,27 @@ def build_hotkeys_screen(app):
     def _create_hotkey_row(idx, bind):
         """Create a single row for a hotkey."""
         row_bg = COLORS["bg_panel"] if idx % 2 == 0 else COLORS["bg_input"]
+        # Separator between rows
+        Separator(scrollable_frame, orient="horizontal", color=COLORS["border"], thickness=1, padding=0).pack(fill="x")
+
         row = tk.Frame(scrollable_frame, bg=row_bg, pady=8, padx=10)
-        row.pack(fill="x", pady=2)
+        row.pack(fill="x", pady=0) # reduced pady since we have separator
         
+        # Context Menu
+        def _show_context_menu(event):
+            menu = tk.Menu(self.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
+            menu.add_command(label="Edit", command=lambda: _edit_this(idx))
+            menu.add_command(label="Delete", command=lambda: _delete_this(idx))
+            menu.post(event.x_root, event.y_root)
+
+        # Helper to bind right-click to all widgets in the row
+        def _bind_right_click(widget):
+            widget.bind("<Button-3>", _show_context_menu)
+            for child in widget.winfo_children():
+                _bind_right_click(child)
+
+        _bind_right_click(row)
+
         # Enable Toggle (Leftmost)
         enabled_var = tk.BooleanVar(value=bind.get("enabled", True))
         
@@ -175,6 +193,32 @@ def build_hotkeys_screen(app):
             font=("Segoe UI", 11, "bold"), width=8, anchor="w"
         ).pack(side="left")
         
+        # Action Buttons (Edit/Delete) — pack BEFORE details so they always get space
+        actions_frame = tk.Frame(row, bg=row_bg)
+        actions_frame.pack(side="right")
+        
+        def _edit_this(i=idx):
+            _open_hotkey_dialog(i)
+            
+        def _delete_this(i=idx):
+            if messagebox.askyesno("Delete", "Delete this hotkey?", parent=self.root):
+                hotkeys_cfg.get("binds", []).pop(i)
+                _refresh_hotkeys_list()
+                _save_hotkeys_config()
+                _apply_hotkeys()
+
+        # E70F = Edit icon
+        ModernButton(
+            actions_frame, COLORS.get("btn_bg", "#444444"), COLORS.get("btn_hover", "#555555"), 
+            text="\uE70F", width=3, font=("Segoe Fluent Icons", 10), command=lambda: _edit_this(idx)
+        ).pack(side="left", padx=2)
+        
+        # E74D = Delete icon
+        ModernButton(
+            actions_frame, COLORS["danger"], COLORS["danger_hover"], 
+            text="\uE74D", width=3, font=("Segoe Fluent Icons", 10), command=lambda: _delete_this(idx)
+        ).pack(side="left", padx=2)
+
         # Details (Sequence + Comment)
         details_frame = tk.Frame(row, bg=row_bg)
         details_frame.pack(side="left", fill="x", expand=True)
@@ -186,11 +230,33 @@ def build_hotkeys_screen(app):
         if bind.get("rightClick", False):
             seq_str = "R-Click + " + seq_str
             
-        tk.Label(
-            details_frame, text=seq_str, 
+        # Truncate long sequence for display, add tooltip
+        display_seq = seq_str if len(seq_str) <= 60 else seq_str[:57] + "..."
+        seq_label = tk.Label(
+            details_frame, text=display_seq, 
             bg=row_bg, fg=COLORS["fg_text"], 
             font=("Segoe UI", 10), anchor="w"
-        ).pack(fill="x")
+        )
+        seq_label.pack(fill="x")
+        
+        # Tooltip for full sequence if truncated
+        if len(seq_str) > 60:
+            def _show_tooltip(e, text=seq_str):
+                tip = tk.Toplevel(seq_label)
+                tip.wm_overrideredirect(True)
+                tip.wm_geometry(f"+{e.x_root + 10}+{e.y_root + 10}")
+                lbl = tk.Label(tip, text=text, bg=COLORS.get("tooltip_bg", "#1E2128"),
+                               fg=COLORS["fg_text"], font=("Segoe UI", 9),
+                               relief="solid", bd=1, padx=6, pady=4, wraplength=400)
+                lbl.pack()
+                seq_label._tooltip_win = tip
+            def _hide_tooltip(e):
+                tip = getattr(seq_label, "_tooltip_win", None)
+                if tip:
+                    tip.destroy()
+                    seq_label._tooltip_win = None
+            seq_label.bind("<Enter>", _show_tooltip)
+            seq_label.bind("<Leave>", _hide_tooltip)
         
         comment = bind.get("comment", "")
         if comment:
@@ -199,32 +265,6 @@ def build_hotkeys_screen(app):
                 bg=row_bg, fg=COLORS["fg_dim"], 
                 font=("Segoe UI", 9, "italic"), anchor="w"
             ).pack(fill="x")
-            
-        # Action Buttons (Edit/Delete)
-        actions_frame = tk.Frame(row, bg=row_bg)
-        actions_frame.pack(side="right")
-        
-        def _edit_this(i=idx):
-            _open_hotkey_dialog(i)
-            
-        def _delete_this(i=idx):
-            if messagebox.askyesno("Delete", "Delete this hotkey?", parent=self.root):
-                binds.pop(i)
-                _refresh_hotkeys_list()
-                _save_hotkeys_config()
-                _apply_hotkeys()
-
-        # E70F = Edit icon
-        ModernButton(
-            actions_frame, COLORS.get("btn_bg", "#444444"), COLORS.get("btn_hover", "#555555"), 
-            text="\uE70F", width=3, font=("Segoe Fluent Icons", 10), command=_edit_this
-        ).pack(side="left", padx=2)
-        
-        # E74D = Delete icon
-        ModernButton(
-            actions_frame, COLORS["danger"], COLORS["danger_hover"], 
-            text="\uE74D", width=3, font=("Segoe Fluent Icons", 10), command=_delete_this
-        ).pack(side="left", padx=2)
 
     def _save_hotkeys_config():
         """Save hotkeys config to app settings."""
@@ -268,7 +308,7 @@ def build_hotkeys_screen(app):
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Hotkey" if is_edit else "Add Hotkey")
-        dialog.geometry("450x350")
+        dialog.geometry("520x450")
         dialog.configure(bg=COLORS["bg_root"])
         dialog.transient(self.root)
         dialog.grab_set()
@@ -298,9 +338,7 @@ def build_hotkeys_screen(app):
         trigger_cb = ttk.Combobox(form, textvariable=trigger_var, values=trigger_keys, width=15)
         trigger_cb.grid(row=0, column=1, sticky="w", pady=5, padx=(10, 0))
         
-        # Sequence
-        tk.Label(form, text="Action Sequence:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).grid(row=1, column=0, sticky="w", pady=5)
-        
+        # Helper to format sequence string
         existing_seq = existing.get("sequence", [])
         seq_parts = []
         for s in existing_seq:
@@ -309,11 +347,27 @@ def build_hotkeys_screen(app):
             else:
                 seq_parts.append(s)
         seq_str = "-".join(seq_parts)
-        sequence_var = tk.StringVar(value=seq_str)
-        sequence_entry = tk.Entry(form, textvariable=sequence_var, width=30, bg=COLORS["bg_input"], fg=COLORS["fg_text"])
-        sequence_entry.grid(row=1, column=1, sticky="w", pady=5, padx=(10, 0))
+
+        # Sequence - multiline Text widget for easier editing
+        sequence_frame = tk.Frame(form, bg=COLORS["bg_root"])
+        sequence_frame.grid(row=1, column=1, sticky="w", pady=5, padx=(10, 0))
         
-        tk.Label(form, text="Keys/clicks: F2-LEFTCLICK-F2, 0-9-2", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 0))
+        sequence_text = tk.Text(
+            sequence_frame, width=35, height=4, 
+            bg=COLORS["bg_input"], fg=COLORS["fg_text"],
+            font=("Segoe UI", 10), wrap="word",
+            insertbackground=COLORS["fg_text"]
+        )
+        sequence_text.pack(side="left", fill="both")
+        sequence_text.insert("1.0", seq_str)
+        
+        # Scrollbar for sequence
+        seq_scroll = ttk.Scrollbar(sequence_frame, orient="vertical", command=sequence_text.yview)
+        seq_scroll.pack(side="right", fill="y")
+        sequence_text.configure(yscrollcommand=seq_scroll.set)
+        
+        tk.Label(form, text="Format: F2-LEFTCLICK-F2 or 0-9-2\n(one command per line also works)", 
+                 bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 0))
         
         # Right click
         tk.Label(form, text="Right-click first:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).grid(row=3, column=0, sticky="w", pady=5)
@@ -334,7 +388,9 @@ def build_hotkeys_screen(app):
         
         def _save():
             trigger = trigger_var.get().strip().upper()
-            seq_raw = sequence_var.get().strip()
+            seq_raw = sequence_text.get("1.0", "end-1c").strip()
+            # Support both - separated and newline separated
+            seq_raw = seq_raw.replace("\n", "-").replace("  ", " ")
             
             if not trigger:
                 messagebox.showwarning("Error", "Trigger key is required", parent=dialog)

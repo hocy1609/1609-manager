@@ -17,6 +17,21 @@ from ui.ui_base import COLORS, ModernButton, bind_hover_effects
 from core.models import Profile
 from ui.dialogs import EditDialog
 
+
+def _get_attr(obj, name: str, default=None):
+    """Get attribute from Profile dataclass or dict. Supports transition period."""
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _set_attr(obj, name: str, value):
+    """Set attribute on Profile dataclass or dict. Supports transition period."""
+    if isinstance(obj, dict):
+        obj[name] = value
+    else:
+        setattr(obj, name, value)
+
 class ProfileManager:
     """
     Manages profile operations and UI interactions.
@@ -40,139 +55,134 @@ class ProfileManager:
         self._inline_frame = None
         self._inline_hide_job = None
         
+        self.item_map = {}  # Map item_id -> profile object
+        
+    def move_profile_to_group(self, profile, target_group):
+        """Move profile to another server group and refresh list."""
+        if isinstance(profile, dict):
+            profile["server_group"] = target_group
+        else:
+            profile.server_group = target_group
+        
+        self.app.save_data()
+        self.refresh_list()
+        
     def refresh_list(self):
-        """Refreshes the profile listbox with categories."""
+        """Refreshes the profile list (Treeview) with categories."""
         if not hasattr(self.app, 'lb'):
             return
 
-        self.app.lb.delete(0, tk.END)
-        self.app.view_map = []
+        tree = self.app.lb
+        # Clear tree
+        tree.delete(*tree.get_children())
+        self.item_map = {}
         
-        # Determine categories
-        if not self.app.profiles:
-            pass
-
+        # Determine categories and sorting (reuse logic)
+        
+        # Configure tags for Treeview styling
+        # Categories: Bold, distinct color
+        tree.tag_configure(
+            "category", 
+            font=("Segoe UI", 10, "bold"), 
+            foreground=COLORS.get("accent", "#4cc9f0") # distinct color
+        )
+        # Profiles: Standard
+        tree.tag_configure(
+            "profile", 
+            font=("Segoe UI", 10),
+            foreground=COLORS["fg_text"]
+        )
+        
+        # Get user-defined category order or build from existing categories
         # Get user-defined category order or build from existing categories
         category_order = getattr(self.app, 'category_order', [])
         
         # Collect all existing categories from profiles
         existing_cats = set()
         for p in self.app.profiles:
-            existing_cats.add(p.get("category", "General"))
+            existing_cats.add(_get_attr(p, "category", "General"))
         
-        # Build final category list: keep user order for known categories, add new ones at end
-        # Ensure "General" is first if it exists and has no custom order
+        # Build final category list
         ordered_cats = []
         for cat in category_order:
             if cat in existing_cats:
                 ordered_cats.append(cat)
                 existing_cats.discard(cat)
         
-        # Add remaining categories (new ones not in category_order)
+        # Add remaining categories
         remaining = sorted(existing_cats)
         if "General" in remaining:
             remaining.remove("General")
             remaining.insert(0, "General")
         ordered_cats.extend(remaining)
         
-        # Update category_order with complete list
-        if hasattr(self.app, 'category_order'):
-            self.app.category_order = ordered_cats
-        
         # Sort profiles by category order, then by profile's order field
         def sort_key(p):
-            cat = p.get("category", "General")
-            order = p.get("order", 0)
+            cat = _get_attr(p, "category", "General")
+            order = _get_attr(p, "order", 0)
             try:
                 cat_idx = ordered_cats.index(cat)
             except ValueError:
                 cat_idx = len(ordered_cats)
             return (cat_idx, order)
 
-        sorted_profiles = sorted(self.app.profiles, key=sort_key)
+        if self.app.profiles:
+           self.app.profiles.sort(key=sort_key)
         
-        # Pre-calculate active cdkeys for O(1) lookup
-        active_cdkeys = set()
-        if hasattr(self.app, 'sessions') and self.app.sessions:
-            try:
-                # Safely access sessions, handling potentially malformed keys or types
-                sessions_map = getattr(self.app.sessions, 'sessions', {}) or {}
-                if isinstance(sessions_map, dict):
-                    for key in sessions_map.keys():
-                        if not isinstance(key, str):
-                            continue
-                        # key format: "player_name::cdkey"
-                        parts = key.split("::")
-                        if len(parts) > 1:
-                            active_cdkeys.add(parts[-1])
-            except Exception:
-                pass
-
-        current_cat = None
+        # Filter profiles based on selected server group (siala/cormyr)
+        current_group = getattr(self.app, 'server_group', 'siala')
         
-        for p in sorted_profiles:
-            cat = p.get("category", "General")
-            if cat != current_cat:
-                # Add separator before category (except first)
-                if current_cat is not None:
-                    self.app.lb.insert(tk.END, "─" * 30)
-                    self.app.lb.itemconfig(tk.END, {
-                        'bg': COLORS["bg_sidebar"], 
-                        'fg': COLORS["border"], 
-                        'selectbackground': COLORS["bg_sidebar"], 
-                        'selectforeground': COLORS["border"]
-                    })
-                    self.app.view_map.append({"type": "separator", "data": None})
-                
-                # Add category header with bold appearance
-                is_collapsed = cat in self.collapsed_categories
-                prefix = "▸" if is_collapsed else "▾"
-                self.app.lb.insert(tk.END, f"{prefix} {cat.upper()}")
-                self.app.lb.itemconfig(tk.END, {
-                    'bg': COLORS["bg_input"], 
-                    'fg': COLORS["accent"], 
-                    'selectbackground': COLORS["bg_input"], 
-                    'selectforeground': COLORS["accent"]
-                })
-                self.app.view_map.append({"type": "header", "data": cat})
-                current_cat = cat
+        filtered_profiles = []
+        for p in self.app.profiles:
+            # Get profile's group, default to 'siala' if missing
+            pg = _get_attr(p, "server_group", "siala")
+            if pg == current_group:
+                filtered_profiles.append(p)
+        
+        # Insert into Treeview
+        for cat in ordered_cats:
+            # Find profiles in this category AND server group
+            cat_profiles = [p for p in filtered_profiles if _get_attr(p, "category", "General") == cat]
             
-            # Skip if category is collapsed
-            if current_cat in self.collapsed_categories:
+            if not cat_profiles:
                 continue
-            
-            # Add profile item
-            name = p.get('name', '???')
-            
-            # Check if running using pre-calculated set
-            cdkey = p.get('cdKey')
-            is_running = bool(cdkey and cdkey in active_cdkeys)
-            
-            display_text = f"  {name}" 
-            if is_running:
-                display_text += "  (Running)"
-            
-            # Check crafter
-            if p.get("is_crafter", False):
-                display_text += "  🔨"
 
-            self.app.lb.insert(tk.END, display_text)
+            # Create category node
+            cat_id = tree.insert("", "end", text=cat, open=True, tags=("category",))
             
-            # Highlight running
-            if is_running:
-                 self.app.lb.itemconfig(tk.END, {'fg': COLORS["success"]})
-            elif p.get("is_crafter", False):
-                 self.app.lb.itemconfig(tk.END, {'fg': COLORS["accent"]})
-            else:
-                 self.app.lb.itemconfig(tk.END, {'fg': COLORS["fg_text"]})
+            for i, p in enumerate(cat_profiles):
+                # Prepare display text
+                name = _get_attr(p, "name")
+                if not name:
+                    name = f"Profile {self.app.profiles.index(p) + 1}"
+                
+                char = _get_attr(p, "characterName", "")
+                
+                display_text = name
+                if char:
+                    display_text += f" ({char})"
+                
+                # Apply 'alt' tag to odd rows for striping, combined with 'profile' tag
+                profile_tags = ["profile"]
+                if i % 2 == 1:
+                    profile_tags.append("alt")
+                
+                # Insert profile node
+                p_id = tree.insert(cat_id, "end", text=display_text, tags=tuple(profile_tags))
+                self.item_map[p_id] = p
+                
+                # Restore selection if it matches current profile
+                if self.app.current_profile == p:
+                    tree.selection_set(p_id)
+                    tree.see(p_id)
 
-            self.app.view_map.append({"type": "profile", "data": p})
+
             
     def get_unique_categories(self) -> List[str]:
         """Return a sorted list of unique profile categories, with 'General' first."""
         cats = set()
         for p in self.app.profiles:
-            cats.add(p.get("category", "General"))
+            cats.add(_get_attr(p, "category", "General"))
         
         res = sorted(list(cats))
         if "General" in res:
@@ -202,17 +212,15 @@ class ProfileManager:
             }
             self.app.profiles.append(new_p)
             self.app.save_data()
-            self.refresh_list()
+            
             # Select the new profile
-            # We need to find its index in view_map
-            for idx, item in enumerate(self.app.view_map):
-                if item.get("data") == new_p:
-                    self.app.lb.selection_clear(0, tk.END)
-                    self.app.lb.selection_set(idx)
-                    self.app.lb.activate(idx)
-                    self.app.on_select(None)
-                    self.app.lb.see(idx)
-                    break
+            self.app.current_profile = new_p
+            self.refresh_list()
+            # on_select will be triggered by user interaction or we can force update info panel?
+            # refresh_list restores selection, but doesn't trigger <<TreeviewSelect>> event automatically
+            # So we manually update the info panel
+            self.update_info_fields(new_p)
+            self.app.on_select(None)
 
         EditDialog(
             self.app.root,
@@ -245,16 +253,12 @@ class ProfileManager:
             old_p["is_crafter"] = bool(data.get("is_crafter", False))
             
             self.app.save_data()
+            # Ensure current profile remains selected
+            self.app.current_profile = old_p
             self.refresh_list()
             
-            # Re-select
-            for idx, item in enumerate(self.app.view_map):
-                if item.get("data") == old_p:
-                    self.app.lb.selection_clear(0, tk.END)
-                    self.app.lb.selection_set(idx)
-                    self.app.lb.activate(idx)
-                    self.app.on_select(None)
-                    break
+            self.update_info_fields(old_p)
+            self.app.on_select(None)
 
         EditDialog(
             self.app.root,
@@ -291,7 +295,7 @@ class ProfileManager:
         if new_name and new_name != old_name:
             changed = False
             for p in self.app.profiles:
-                if p.get("category") == old_name:
+                if _get_attr(p, "category") == old_name:
                     p["category"] = new_name
                     changed = True
             
@@ -307,150 +311,189 @@ class ProfileManager:
             self.collapsed_categories.add(category)
         self.refresh_list()
 
+    def move_category_to_group(self, category_name: str, target_group: str):
+        """Move all profiles in a category to another server group."""
+        # Find all profiles in this category AND current server group (implicit, since we only see current group)
+        # Actually, if we move a category, we likely want to move ALL profiles in that category regardless of their current group?
+        # OR just the ones visible? User probably expects visible ones if they are filtered.
+        # But wait, if I move "General" to Cormyr, do I want profiles in "General" that are already in Cormyr to stay? Yes.
+        # Do I want profiles in "General" that are in `siala` (current) to move to `cormyr`? Yes.
+        
+        current_group = getattr(self.app, 'server_group', 'siala')
+        count = 0
+        for p in self.app.profiles:
+            p_cat = _get_attr(p, "category", "General")
+            p_group = _get_attr(p, "server_group", "siala")
+            
+            if p_cat == category_name and p_group == current_group:
+                _set_attr(p, "server_group", target_group)
+                count += 1
+        
+        if count > 0:
+            self.app.save_data()
+            self.refresh_list()
+            messagebox.showinfo("Move Category", f"Moved {count} profiles from '{category_name}' to {target_group.title()}.")
+        else:
+            messagebox.showinfo("Move Category", "No profiles found to move.")
+
     def show_profile_menu(self, event):
         """Show context menu for profiles."""
-        idx = self.app.lb.nearest(event.y)
-        if idx < 0 or idx >= len(self.app.view_map):
+        tree = self.app.lb
+        # Identify row at Y coordinate
+        item_id = tree.identify_row(event.y)
+        if not item_id:
             return
 
-        # Select the item under cursor
-        self.app.lb.selection_clear(0, tk.END)
-        self.app.lb.selection_set(idx)
-        self.app.lb.activate(idx)
-        self.app.on_select(None)
+        # Select the item
+        tree.selection_set(item_id)
+        self.on_select(None)
         
-        item = self.app.view_map[idx]
-        if item["type"] == "header":
+        tags = tree.item(item_id, "tags")
+        
+        # Determine target group for moves
+        current_group = getattr(self.app, 'server_group', 'siala')
+        target_group = "cormyr" if current_group == "siala" else "siala"
+        target_name = "Cormyr" if target_group == "cormyr" else "Siala"
+        
+        if "category" in tags:
             # Menu for category
-            cat_name = item["data"]
-            menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS["bg_menu"], fg=COLORS["fg_text"])
+            cat_name = tree.item(item_id, "text")
+            menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
+            
             menu.add_command(label="Rename Category", command=lambda: self.rename_category(cat_name))
+            
+            # Move Category Option
+            menu.add_command(
+                label=f"Move All to {target_name}",
+                command=lambda: self.move_category_to_group(cat_name, target_group)
+            )
+            
             menu.post(event.x_root, event.y_root)
-        else:
+            
+        elif "profile" in tags:
             # Menu for profile
-            menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS["bg_menu"], fg=COLORS["fg_text"])
-            menu.add_command(label="Edit", command=self.edit_profile)
-            menu.add_command(label="Delete", command=self.delete_profile)
+            if item_id not in self.item_map:
+                return
+            prof = self.item_map[item_id]
+            
+            menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
+            menu.add_command(label="Edit", command=lambda: self.edit_profile()) # Use edit_profile without args as it uses current_profile
+            
+            # Move to other group
+            menu.add_command(
+                label=f"Move to {target_name}", 
+                command=lambda: self.move_profile_to_group(prof, target_group)
+            )
+            
+            menu.add_separator()
+            menu.add_command(label="Delete", command=lambda: self.delete_profile()) # Use delete_profile without args
             menu.add_separator()
             
             # Launch options
             menu.add_command(label="Launch", command=self.app.launch_game)
             
             # Crafter toggle
-            prof = item["data"]
-            is_crafter = bool(prof.get("is_crafter", False))
+            is_crafter = bool(_get_attr(prof, "is_crafter", False))
             lbl = "Unmark as Crafter" if is_crafter else "Mark as Crafter"
             menu.add_command(label=lbl, command=self.app.toggle_crafter)
             
             menu.post(event.x_root, event.y_root)
 
-    def on_select(self, _):
-        """Handle profile selection."""
-        try:
-            sel = self.app.lb.curselection()
-            if not sel:
-                # Nothing selected
-                self.app.current_profile = None
-                try:
-                    self.app.header_lbl.config(text="Select Profile")
-                    self.app.cat_lbl.config(text="")
-                    self.update_info_fields({})
-                except Exception:
-                    pass
-                try:
-                    self.app.update_launch_buttons()
-                except Exception:
-                    pass
-                # Disable edit/delete when no selection
-                try:
-                    self.app.btn_edit_profile.configure(state="disabled")
-                    self.app.btn_delete_profile_top.configure(state="disabled")
-                except Exception:
-                    pass
-                return
-
-            idx = int(sel[0])
-            if idx < 0 or idx >= len(self.app.view_map):
-                return
-
-            item = self.app.view_map[idx]
-            if item.get("type") == "header":
-                # Clear selection as headers aren't selectable profiles
-                self.app.lb.selection_clear(0, tk.END)
+    def on_select(self, event):
+        """Handle selection in Treeview."""
+        tree = self.app.lb
+        selection = tree.selection()
+        if not selection:
+            return
+            
+        item_id = selection[0]
+        # Check if it's a profile
+        if item_id in self.item_map:
+            profile = self.item_map[item_id]
+            self.app.current_profile = profile
+            self.app.current_profile = profile
+            # self.app.update_info_panel() - REMOVED: Method does not exist, updates handled by update_info_fields
+            
+            # Switch server group/server based on profile
+            try:
+                profile_group = _get_attr(profile, "server_group", "siala")
+                current_group = getattr(self.app, 'server_group', 'siala')
                 
-                # Show category but no profile selected
-                self.app.current_profile = None
-                try:
-                    self.app.header_lbl.config(text="Select Profile")
-                    self.app.cat_lbl.config(text=item.get("data", ""))
-                    self.update_info_fields({})
-                except Exception:
-                    pass
-                try:
-                    self.app.update_launch_buttons()
-                except Exception:
-                    pass
-                try:
-                    self.app.btn_edit_profile.configure(state="disabled")
-                    self.app.btn_delete_profile_top.configure(state="disabled")
-                except Exception:
-                    pass
-                return
-
-            # Profile selected
-            prof = item.get("data")
-            self.app.current_profile = prof
-            try:
-                self.app.header_lbl.config(text=prof.get("name", ""))
-                self.app.cat_lbl.config(text=prof.get("category", ""))
-                self.update_info_fields(prof)
-            except Exception:
-                pass
-            # Load server binding from profile
-            try:
-                # Switch server group if profile has a different group
-                profile_group = prof.get("server_group", "siala")
-                if profile_group and profile_group != getattr(self.app, 'server_group', 'siala'):
-                    # Save current group's servers
-                    if hasattr(self.app, 'server_groups') and hasattr(self.app, 'server_group'):
-                        self.app.server_groups[self.app.server_group] = self.app.servers
-                    # Switch to profile's group
+                # Switch group if needed
+                if profile_group and profile_group != current_group:
+                    if hasattr(self.app, 'server_groups'):
+                        self.app.server_groups[current_group] = self.app.servers
+                    
                     self.app.server_group = profile_group
                     self.app.servers = self.app.server_groups.get(profile_group, [])
-                    # Update group button highlighting
-                    if hasattr(self.app, '_update_group_buttons'):
-                        self.app._update_group_buttons()
-                    # Recreate server buttons
+                    
                     if hasattr(self.app, '_create_server_buttons'):
                         self.app._create_server_buttons()
-                    # Trigger ping for new servers
-                    self.app.root.after(100, self.app.server_manager.ping_all_servers)
-                
-                # Set server from profile
-                profile_server = prof.get("server", "")
-                if profile_server and profile_server in [s["name"] for s in self.app.servers]:
-                    self.app.server_var.set(profile_server)
-                elif self.app.servers:
-                    self.app.server_var.set(self.app.servers[0]["name"])
                     
-                self.app.check_server_status()
-                # Update server button highlighting
+                    # Update Slayer visibility
+                    if hasattr(self.app, 'status_bar_comp'):
+                        self.app.status_bar_comp.set_slayer_visibility(profile_group != 'siala')
+                    
+                    # Update sidebar highlight
+                    if hasattr(self.app, '_update_group_buttons'):
+                        self.app._update_group_buttons()
+
+                    if hasattr(self.app, 'server_manager'):
+                         self.app.root.after(100, self.app.server_manager.ping_all_servers)
+
+                # Update info fields (right panel)
+                self.update_info_fields(profile)
+
+
+                # Set server
+                profile_server = _get_attr(profile, "server", "")
+                if profile_server:
+                     server_names = [s["name"] for s in self.app.servers]
+                     if profile_server in server_names:
+                         self.app.server_var.set(profile_server)
+                elif self.app.servers:
+                     self.app.server_var.set(self.app.servers[0]["name"])
+                
+                if hasattr(self.app, 'check_server_status'):
+                    self.app.check_server_status()
                 if hasattr(self.app, '_update_server_button_styles'):
                     self.app._update_server_button_styles()
-            except Exception:
-                pass
-            try:
-                self.app.update_launch_buttons()
-            except Exception:
-                pass
-            # Enable edit/delete for selected profile
-            try:
-                self.app.btn_edit_profile.configure(state="normal")
-                self.app.btn_delete_profile_top.configure(state="normal")
-            except Exception:
-                pass
-        except Exception as e:
-            self.app.log_error("on_select", e)
+
+            except Exception as e:
+                self.app.log_error("on_select_server_switch", e)
+            
+            # Enable buttons
+            if hasattr(self.app, 'btn_launch'):
+                self.app.btn_launch.configure(state="normal")
+            if hasattr(self.app, 'btn_connect'):
+                self.app.btn_connect.configure(state="normal")
+            if hasattr(self.app, 'btn_edit_profile'):
+               self.app.btn_edit_profile.configure(state="normal")
+            if hasattr(self.app, 'btn_delete_profile_top'):
+               self.app.btn_delete_profile_top.configure(state="normal")
+        else:
+            # Category selected - treat as deselection or just ignore?
+            pass
+
+    def select_initial_profile(self):
+        """Select the first available profile if none selected."""
+        if not self.app.profiles:
+            return
+            
+        tree = self.app.lb
+        # Find first profile item
+        for cat_id in tree.get_children():
+            children = tree.get_children(cat_id)
+            if children:
+                first_profile_id = children[0]
+                tree.selection_set(first_profile_id)
+                tree.see(first_profile_id)
+                # Manually trigger on_select logic
+                # We can just call on_select with None, but better to be explicit
+                # But wait, we need to ensure selection is set before calling on_select if on_select reads selection
+                self.on_select(None)
+                return
+
 
     def update_info_fields(self, p: dict):
         """Update the info panel fields from profile dict."""
@@ -464,10 +507,15 @@ class ProfileManager:
             entry.configure(state=state)
             
         try:
-            set_val(self.app.info_login, p.get("playerName", ""))
+            # Update header with profile name
+            name = _get_attr(p, "name", "") or _get_attr(p, "playerName", "")
+            if hasattr(self.app, 'header_lbl') and name:
+                self.app.header_lbl.config(text=name)
+            
+            set_val(self.app.info_login, _get_attr(p, "playerName", ""))
             
             # Mask cdkey
-            cdkey = p.get("cdKey", "")
+            cdkey = _get_attr(p, "cdKey", "")
             if not self.app.show_key and cdkey:
                 masked = cdkey[:4] + "*" * (len(cdkey) - 4) if len(cdkey) > 4 else "*"*len(cdkey)
                 set_val(self.app.info_cdkey, masked)
@@ -480,39 +528,8 @@ class ProfileManager:
 
     def on_profile_list_motion(self, event):
         """Show inline edit/delete buttons when hovering over a profile row."""
-        try:
-            idx = self.app.lb.nearest(event.y)
-            # If mouse is outside the items (e.g. empty space at bottom), nearest returns last item
-            # Check bounding box
-            bbox = self.app.lb.bbox(idx)
-            if not bbox:
-                self.hide_inline_actions()
-                return
-            
-            y_offset = event.y - bbox[1]
-            if y_offset < 0 or y_offset > bbox[3]:
-                self.hide_inline_actions()
-                return
-
-            if idx == self._hover_idx:
-                return  # already showing for this item
-
-            # Check if it's a profile (not header)
-            if idx < 0 or idx >= len(self.app.view_map):
-                self.hide_inline_actions()
-                return
-
-            item = self.app.view_map[idx]
-            if item.get("type") != "profile":
-                self.hide_inline_actions()
-                return
-
-            # It's a profile, show buttons
-            self._hover_idx = idx
-            self._show_inline_actions(idx, bbox)
-            
-        except Exception:
-            pass
+        # Disabled for Treeview migration (requires new implementation)
+        return
 
     def on_profile_list_leave(self, _event):
         """Mouse left the listbox."""
@@ -618,57 +635,130 @@ class ProfileManager:
 
     def on_drag_start(self, event):
         """Handle drag start on profile list."""
-        idx = self.app.lb.nearest(event.y)
-        if idx < 0 or idx >= len(self.app.view_map):
+        tree = self.app.lb
+        item_id = tree.identify_row(event.y)
+        if not item_id:
             return
-        
-        item = self.app.view_map[idx]
-        if item["type"] == "header":
-            # Start dragging category
-            self.app.drag_data["index"] = idx
-            self.app.drag_data["type"] = "category"
-            self.app.drag_data["category"] = item["data"]
-            return
-        elif item["type"] == "profile":
-            # Start dragging profile
-            self.app.drag_data["index"] = idx
-            self.app.drag_data["type"] = "profile"
-            self.app.drag_data["data"] = item["data"]
-            self.app.on_select(None)
+            
+        # Determine what we are dragging
+        tags = tree.item(item_id, "tags")
+        if "category" in tags:
+            self.app.drag_data = {
+                "type": "category",
+                "item_id": item_id,
+                "data": tree.item(item_id, "text")
+            }
         else:
-            # Separator or unknown - ignore
-            return
-    
+            if item_id in self.item_map:
+                profile = self.item_map[item_id]
+                self.app.drag_data = {
+                    "type": "profile",
+                    "item_id": item_id,
+                    "data": profile
+                }
+            else:
+                 return
+
     def on_drag_drop(self, event):
         """Handle drag drop to reorder profiles and categories."""
-        old_idx = self.app.drag_data.get("index")
-        drag_type = self.app.drag_data.get("type")
-        drag_category = self.app.drag_data.get("category")  # Save before clearing
-        drag_profile = self.app.drag_data.get("data")  # Save before clearing
-        
-        if old_idx is None:
+        tree = self.app.lb
+        target_id = tree.identify_row(event.y)
+        if not target_id:
             return
+            
+        drag_data = self.app.drag_data
+        if not drag_data or "type" not in drag_data:
+            return
+
+        drag_type = drag_data["type"]
+        drag_item_id = drag_data["item_id"]
         
-        new_idx = self.app.lb.nearest(event.y)
+        if drag_item_id == target_id:
+             return
+
+        # Handle moving logic
         
+        # Determine target region
+        target_tags = tree.item(target_id, "tags")
+        target_parent = tree.parent(target_id)
+        
+        # Profile Drop Logic
+        if drag_type == "profile":
+            # Profile being dragged
+            profile = drag_data["data"]
+            old_cat = _get_attr(profile, "category", "General")
+            
+            # Identify target category and index
+            target_category = None
+            insert_index = 0
+            
+            if "category" in target_tags:
+                # Dropped ON a category header -> Append to end of this category or start?
+                # Let's append to end for simplicity, or insert at top (index 0)
+                target_category = tree.item(target_id, "text")
+                insert_index = 0 # Insert at top
+            elif "profile" in target_tags:
+                # Dropped ON another profile -> Insert before or after?
+                # Usually drop "on" means insert before or swap. Let's say insert before.
+                if target_parent:
+                    target_category = tree.item(target_parent, "text")
+                    target_index = tree.index(target_id)
+                    insert_index = target_index
+            
+            if target_category:
+                # 1. Update Category if changed
+                current_cat = _get_attr(profile, "category", "General")
+                if current_cat != target_category:
+                    _set_attr(profile, "category", target_category)
+                
+                # 2. Reorder within the target category
+                # Get all profiles in target category from the app.profiles list
+                # We need to respect the server filter? No, reordering should affect global state if possible,
+                # but we are only viewing filtered list.
+                # Actually, `tree.get_children(cat_id)` gives us the visual order.
+                # We should construct the new order based on visual state.
+                
+                # Find the category ID in tree
+                cat_id = None
+                for child in tree.get_children():
+                    if tree.item(child, "text") == target_category:
+                        cat_id = child
+                        break
+                
+                if cat_id:
+                    # Get current visual children (items)
+                    children = list(tree.get_children(cat_id))
+                    
+                    # Remove dragged item from its old position in visual list if it was there
+                    if drag_item_id in children:
+                        children.remove(drag_item_id)
+                    
+                    # Insert at new index
+                    # Safe guard index
+                    if insert_index > len(children):
+                        insert_index = len(children)
+                    
+                    children.insert(insert_index, drag_item_id)
+                    
+                    # Now update the 'order' attribute of profiles based on this new visual order
+                    for idx, child_id in enumerate(children):
+                        if child_id in self.item_map:
+                            p = self.item_map[child_id]
+                            _set_attr(p, "order", idx)
+                            
+                self.app.save_data()
+                self.refresh_list()
+                
+                # Restore selection
+                # We need to find the new ID for this profile since refresh_list recreates items
+                # But we can rely on on_select logic to handle current_profile if it matches
+                return
+
+        # Category Reordering Logic (omitted for now as requested focus is on profile reordering)
+
         # Clear drag data
-        self.app.drag_data["index"] = None
-        self.app.drag_data["type"] = None
-        self.app.drag_data["category"] = None
-        self.app.drag_data["data"] = None
+        self.app.drag_data = {}
         
-        if new_idx == old_idx:
-            # No movement - toggle category if it was a category header click
-            if drag_type == "category" and drag_category:
-                self.toggle_category(drag_category)
-                self.app.lb.selection_clear(0, tk.END)
-            return
-        
-        if drag_type == "category":
-            self._handle_category_drop(old_idx, new_idx, drag_category)
-        elif drag_type == "profile":
-            self._handle_profile_drop(old_idx, new_idx, drag_profile)
-    
     def _handle_category_drop(self, old_idx, new_idx, dragged_cat):
         """Handle dropping a category header to reorder categories."""
         if not dragged_cat:
@@ -717,14 +807,14 @@ class ProfileManager:
                 target_cat = self.app.view_map[i]["data"]
                 break
         
-        old_cat = profile_data.get("category", "General")
+        old_cat = _get_attr(profile_data, "category", "General")
         
         # Get all profiles in target category and their current order
         target_profiles = [
             p for p in self.app.profiles 
-            if p.get("category", "General") == target_cat and p is not profile_data
+            if _get_attr(p, "category", "General") == target_cat and p is not profile_data
         ]
-        target_profiles.sort(key=lambda p: p.get("order", 0))
+        target_profiles.sort(key=lambda p: _get_attr(p, "order", 0))
         
         # Calculate new order value based on drop position
         # Find position within category
@@ -734,28 +824,28 @@ class ProfileManager:
             if item["type"] == "header":
                 break
             if item["type"] == "profile" and item["data"] is not profile_data:
-                if item["data"].get("category", "General") == target_cat:
+                if _get_attr(item["data"], "category", "General") == target_cat:
                     profiles_before += 1
         
         # Update category if changed
-        profile_data["category"] = target_cat
+        _set_attr(profile_data, "category", target_cat)
         
         # Insert at the right position and recalculate order for all profiles in category
         target_profiles.insert(profiles_before, profile_data)
         
         # Reassign order values
         for i, p in enumerate(target_profiles):
-            p["order"] = i
+            _set_attr(p, "order", i)
         
         # If category changed, recalculate order in old category too
         if old_cat != target_cat:
             old_cat_profiles = [
                 p for p in self.app.profiles 
-                if p.get("category", "General") == old_cat
+                if _get_attr(p, "category", "General") == old_cat
             ]
-            old_cat_profiles.sort(key=lambda p: p.get("order", 0))
+            old_cat_profiles.sort(key=lambda p: _get_attr(p, "order", 0))
             for i, p in enumerate(old_cat_profiles):
-                p["order"] = i
+                _set_attr(p, "order", i)
         
         self.app.save_data()
         self.refresh_list()

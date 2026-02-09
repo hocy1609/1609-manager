@@ -26,6 +26,7 @@ COLORS = {
     "title_btn_hover": "#3A3F4B",
     "tooltip_bg": "#1E2128",
     "bg_sidebar": "#282C34",
+    "bg_menu": "#2E333D",
 }
 
 # Font family - uses Mona Sans with Segoe UI fallback
@@ -706,6 +707,7 @@ THEMES = {
         "title_btn_hover": "#3A3F4B",
         "tooltip_bg": "#1E2128",
         "bg_sidebar": "#282C34",
+        "bg_menu": "#2E333D",
     },
     
     # Purple/Violet night theme - soft and cozy
@@ -732,6 +734,7 @@ THEMES = {
         "title_btn_hover": "#3D3450",
         "tooltip_bg": "#1A1625",
         "bg_sidebar": "#241E30",
+        "bg_menu": "#2D263B",
     },
     
     # Ocean blue dark theme
@@ -758,6 +761,7 @@ THEMES = {
         "title_btn_hover": "#2C4158",
         "tooltip_bg": "#0D1B2A",
         "bg_sidebar": "#1B2838",
+        "bg_menu": "#233444",
     },
     
     # === LIGHT THEMES ===
@@ -786,6 +790,7 @@ THEMES = {
         "title_btn_hover": "#E5E1DA",
         "tooltip_bg": "#FFFFFF",
         "bg_sidebar": "#FFFFFF",
+        "bg_menu": "#F5F1EB",
     },
     
     # Mint/Sage light theme - fresh and clean
@@ -812,6 +817,7 @@ THEMES = {
         "title_btn_hover": "#D1FAE5",
         "tooltip_bg": "#FFFFFF",
         "bg_sidebar": "#FFFFFF",
+        "bg_menu": "#ECFDF5",
     },
     
     # Rose/Pink light theme - warm and elegant
@@ -838,6 +844,7 @@ THEMES = {
         "title_btn_hover": "#FECDD3",
         "tooltip_bg": "#FFFFFF",
         "bg_sidebar": "#FFFFFF",
+        "bg_menu": "#FFE4E6",
     },
     
     # === SPECIAL THEMES ===
@@ -866,6 +873,7 @@ THEMES = {
         "title_btn_hover": "#2E2E2E",
         "tooltip_bg": "#0A0A0A",
         "bg_sidebar": "#171717",
+        "bg_menu": "#1F1F1F",
     },
 }
 

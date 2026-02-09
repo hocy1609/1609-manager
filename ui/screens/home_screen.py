@@ -49,29 +49,137 @@ def build_home_screen(app):
         command=self.add_profile,
         tooltip="Добавить профиль",
     )
+    self.btn_add_profile_side = ModernButton(
+        accounts_header,
+        COLORS["accent"],
+        COLORS["accent_hover"],
+        text="\uE710",
+        width=3,
+        font=("Segoe Fluent Icons", 10),
+        command=self.add_profile,
+        tooltip="Добавить профиль",
+    )
     self.btn_add_profile_side.pack(side="right")
     
-    # Header underline
-    tk.Frame(sidebar, bg=COLORS["accent"], height=2).pack(fill="x", padx=15, pady=(5, 15))
+    # Server Group Switcher (in sidebar)
+    switcher_frame = tk.Frame(sidebar, bg=COLORS["bg_panel"])
+    switcher_frame.pack(fill="x", padx=15, pady=(0, 10))
+    
+    self.server_group_buttons = {}
+    
+    def _switch_server_group(group_name):
+        """Switch to a different server group."""
+        if self.server_group == group_name:
+            return
+        # Save current group's servers
+        self.server_groups[self.server_group] = self.servers
+        # Switch to new group
+        self.server_group = group_name
+        self.servers = self.server_groups.get(group_name, [])
+        # Reset server selection
+        if self.servers:
+            self.server_var.set(self.servers[0]["name"])
+        else:
+            self.server_var.set("")
+        
+        # Reset current profile and info panel when switching groups
+        self.current_profile = None
+        if hasattr(self, 'header_lbl'):
+            self.header_lbl.config(text="Select Profile")
+        if hasattr(self, 'info_cdkey'):
+            self.info_cdkey.configure(state="normal")
+            self.info_cdkey.delete(0, "end")
+            self.info_cdkey.configure(state="readonly")
+        if hasattr(self, 'info_login'):
+            self.info_login.configure(state="normal")
+            self.info_login.delete(0, "end")
+            self.info_login.configure(state="readonly")
+        
+        # Update UI
+        _update_group_buttons_sidebar()
+        self._create_server_buttons()
+        
+        # Filter profile list
+        self.profile_manager.refresh_list()
+        
+        # Update Slayer visibility (hide on Siala)
+        if hasattr(self, 'status_bar_comp'):
+             self.status_bar_comp.set_slayer_visibility(group_name != 'siala')
+
+        # Trigger ping for new servers
+        self.root.after(100, self.server_manager.ping_all_servers)
+        self.save_data()
+
+    def _update_group_buttons_sidebar():
+        """Update visual state of sidebar group toggle buttons."""
+        for grp, btn in self.server_group_buttons.items():
+            if grp == self.server_group:
+                btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
+                btn.bg_color = COLORS["accent"]
+                btn._color_key = "accent"
+            else:
+                btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
+                btn.bg_color = COLORS["bg_panel"]
+                btn._color_key = "bg_panel"
+
+    self._switch_server_group = _switch_server_group
+    self._update_group_buttons = _update_group_buttons_sidebar
+
+    btn_siala = ModernButton(
+        switcher_frame,
+        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'siala' else COLORS["bg_panel"],
+        COLORS["accent_hover"],
+        text="Siala",
+        font=("Segoe UI", 9),
+        width=12,
+        command=lambda: _switch_server_group("siala"),
+        tooltip="Switch to Siala servers",
+    )
+    btn_siala.pack(side="left", padx=(0, 5), expand=True, fill="x")
+    self.server_group_buttons["siala"] = btn_siala
+    
+    btn_cormyr = ModernButton(
+        switcher_frame,
+        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'cormyr' else COLORS["bg_panel"],
+        COLORS["accent_hover"],
+        text="Cormyr",
+        font=("Segoe UI", 9),
+        width=12,
+        command=lambda: _switch_server_group("cormyr"),
+        tooltip="Switch to Cormyr servers",
+    )
+    btn_cormyr.pack(side="left", expand=True, fill="x")
+    self.server_group_buttons["cormyr"] = btn_cormyr
+    
+    # Initialize state
+    self.root.after(100, _update_group_buttons_sidebar)
+
 
     # Vertical separator between sidebar and content
     Separator(game_split, orient="vertical", color=COLORS["border"], thickness=1, padding=0).pack(side="left", fill="y")
 
     accounts_wrap = tk.Frame(sidebar, bg=COLORS["bg_panel"])
     accounts_wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-    self.lb = tk.Listbox(
+    # Replace Listbox with Treeview
+    # Using "headings" show option to show column headers
+    self.lb = ttk.Treeview(
         accounts_wrap,
-        bg=COLORS["bg_panel"],
-        fg=COLORS["fg_text"],
-        selectbackground=COLORS["accent"],
-        selectforeground=COLORS["bg_panel"],
-        bd=0,
-        highlightthickness=0,
-        font=("Segoe UI", 11),
-        activestyle="none",
-        exportselection=False,
+        selectmode="browse",
+        show="tree",
+        style="ProfileList.Treeview"
     )
+    
+    # Configure columns
+    # Configure columns
+    self.lb.column("#0", width=260, anchor="w")
+    self.lb.heading("#0", text="Profile", anchor="w")
+
+    # Scrollbar
+    scrollbar = ttk.Scrollbar(accounts_wrap, orient="vertical", command=self.lb.yview)
+    self.lb.configure(yscrollcommand=scrollbar.set)
+    
     self.lb.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
 
     # Inline action buttons
     self.inline_action_frame = tk.Frame(self.lb, bg=COLORS["bg_panel"], bd=0)
@@ -111,7 +219,7 @@ def build_home_screen(app):
     self._inline_action_index = None
     self._inline_hide_job = None
 
-    self.lb.bind("<<ListboxSelect>>", self.on_select)
+    self.lb.bind("<<TreeviewSelect>>", self.on_select)
     self.lb.bind("<Button-1>", self.on_drag_start)
     self.lb.bind("<ButtonRelease-1>", self.on_drag_drop)
     self.lb.bind("<Button-3>", self.on_right_click)
@@ -145,79 +253,7 @@ def build_home_screen(app):
     )
     self.header_lbl.pack(side="left")
     
-    # Server Group Switcher (right side of header)
-    group_frame = tk.Frame(header_row, bg=COLORS["bg_root"])
-    group_frame.pack(side="right")
-    
-    def _switch_server_group(group_name):
-        """Switch to a different server group."""
-        if self.server_group == group_name:
-            return
-        # Save current group's servers
-        self.server_groups[self.server_group] = self.servers
-        # Switch to new group
-        self.server_group = group_name
-        self.servers = self.server_groups.get(group_name, [])
-        # Reset server selection
-        if self.servers:
-            self.server_var.set(self.servers[0]["name"])
-        else:
-            self.server_var.set("")
-        # Save group to current profile
-        if self.current_profile:
-            self.current_profile["server_group"] = group_name
-            self.current_profile["server"] = self.server_var.get()
-        # Update UI
-        _update_group_buttons()
-        self._create_server_buttons()
-        # Trigger ping for new servers
-        self.root.after(100, self.server_manager.ping_all_servers)
-        self.save_data()
-    
-    def _update_group_buttons():
-        """Update visual state of group toggle buttons."""
-        for grp, btn in self.server_group_buttons.items():
-            if grp == self.server_group:
-                btn.configure(bg=COLORS["accent"], fg=COLORS["text_dark"])
-                btn.bg_color = COLORS["accent"]
-                btn._color_key = "accent"  # Update semantic key for theme switching
-            else:
-                btn.configure(bg=COLORS["bg_panel"], fg=COLORS["fg_text"])
-                btn.bg_color = COLORS["bg_panel"]
-                btn._color_key = "bg_panel"  # Update semantic key for theme switching
-    
-    self.server_group_buttons = {}
-    
-    btn_siala = ModernButton(
-        group_frame,
-        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'siala' else COLORS["bg_panel"],
-        COLORS["accent_hover"],
-        text="Siala",
-        font=("Segoe UI", 9),
-        width=8,
-        command=lambda: _switch_server_group("siala"),
-        tooltip="Switch to Siala servers",
-    )
-    btn_siala.pack(side="left", padx=(0, 2))
-    self.server_group_buttons["siala"] = btn_siala
-    
-    btn_cormyr = ModernButton(
-        group_frame,
-        COLORS["accent"] if getattr(self, 'server_group', 'siala') == 'cormyr' else COLORS["bg_panel"],
-        COLORS["accent_hover"],
-        text="Cormyr",
-        font=("Segoe UI", 9),
-        width=8,
-        command=lambda: _switch_server_group("cormyr"),
-        tooltip="Switch to Cormyr servers",
-    )
-    btn_cormyr.pack(side="left")
-    self.server_group_buttons["cormyr"] = btn_cormyr
-    
-    self._update_group_buttons = _update_group_buttons
-    
-    # Update group button styles based on current group
-    self.root.after(100, _update_group_buttons)
+    # OLD Server Group Switcher removed from here
     
     self.cat_lbl = tk.Label(
         content,

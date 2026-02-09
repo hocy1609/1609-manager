@@ -107,6 +107,18 @@ class Profile:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
 
 @dataclass
 class OpenWoundsConfig:

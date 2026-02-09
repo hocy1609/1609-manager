@@ -1,12 +1,9 @@
 import os
 import json
 import sys
-import subprocess
 import time
 import threading
 import stat
-import shutil
-import csv
 import tempfile
 import atexit
 import ctypes
@@ -176,6 +173,7 @@ class NWNManagerApp:
             default_settings_src = os.path.join(bundle_dir, "nwn_settings.example.json")
             if os.path.exists(default_settings_src) and not os.path.exists(self.settings_path):
                 try:
+                    import shutil
                     shutil.copyfile(default_settings_src, self.settings_path)
                 except Exception:
                     logging.exception("Unhandled exception")
@@ -190,6 +188,8 @@ class NWNManagerApp:
             self.temp_dir = None
 
         def _cleanup_temp():
+            import shutil
+
             try:
                 if self.temp_dir and os.path.exists(self.temp_dir):
                     shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -240,21 +240,7 @@ class NWNManagerApp:
         
         # Auto-select first profile if none selected and list not empty
         def _initial_select():
-            try:
-                if not self.current_profile and self.view_map:
-                    # Check if view_map[0] is a profile (skip group headers if any)
-                    first_idx = 0
-                    for idx, item in enumerate(self.view_map):
-                        if item.get("type") == "profile":
-                            first_idx = idx
-                            break
-                    
-                    self.lb.focus_set()
-                    self.lb.selection_set(first_idx)
-                    self.lb.activate(first_idx)
-                    self.on_select(None)
-            except Exception:
-                pass
+            self.profile_manager.select_initial_profile()
         
         self.root.after(200, _initial_select)
 
@@ -287,51 +273,26 @@ class NWNManagerApp:
     def status_bar_labels(self):
         return self.status_bar_comp.labels if self.status_bar_comp else {}
 
-    def apply_theme(self):
-        """Reapply current theme across all widgets. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager.apply_theme()
-    
-    def _rebuild_current_screen(self):
-        """Rebuild the current screen with new theme colors. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._rebuild_current_screen()
-    
-    def _update_all_nav_buttons(self):
-        """Update all navigation buttons. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_all_nav_buttons()
-    
-    def _update_nav_bar_theme(self):
-        """Update navigation bar colors. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_nav_bar_theme()
-    
-    def _update_sidebar_theme(self):
-        """Update sidebar colors. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_sidebar_theme()
-    
-    def _update_widget_tree_bg(self, widget, bg_color):
-        """Update widget tree background. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_widget_tree_bg(widget, bg_color)
-    
-    def _update_widget_colors_recursive(self, widget):
-        """Update widget colors recursively. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_widget_colors_recursive(widget)
-    
-    def _update_status_bar_theme(self):
-        """Update status bar colors. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_status_bar_theme()
-    
-    def _update_canvas_widgets(self, widget):
-        """Update Canvas widgets. Delegates to ThemeManager."""
-        if hasattr(self, 'theme_manager'):
-            self.theme_manager._update_canvas_widgets(widget)
+    # Methods delegated to ThemeManager dynamically via __getattr__
+    _THEME_MANAGER_METHODS = {
+        "apply_theme",
+        "_rebuild_current_screen",
+        "_update_all_nav_buttons",
+        "_update_nav_bar_theme",
+        "_update_sidebar_theme",
+        "_update_widget_tree_bg",
+        "_update_widget_colors_recursive",
+        "_update_status_bar_theme",
+        "_update_canvas_widgets",
+    }
 
+    def __getattr__(self, name):
+        """Delegate theme-related methods to ThemeManager."""
+        if name in NWNManagerApp._THEME_MANAGER_METHODS:
+            if hasattr(self, 'theme_manager'):
+                return getattr(self.theme_manager, name)
+            return lambda *args, **kwargs: None  # No-op if theme_manager not ready
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
     # === ЛОГГЕР ОШИБОК ===
 
     def log_error(self, context: str, exc: Exception) -> None:
@@ -398,6 +359,7 @@ class NWNManagerApp:
 
     def _migrate_old_settings(self):
         """Migrate settings files from old location (app_dir) to new location (data_dir/1609 settings)."""
+        import shutil
         try:
             old_settings = os.path.join(self.app_dir, SETTINGS_FILE)
             old_sessions = os.path.join(self.app_dir, SESSIONS_FILE)
@@ -433,6 +395,7 @@ class NWNManagerApp:
 
     def _backup_settings(self):
         """Create a timestamped backup of nwn_settings.json in the backups folder."""
+        import shutil
         try:
             if not os.path.exists(self.settings_path):
                 return  # Nothing to backup
@@ -503,7 +466,7 @@ class NWNManagerApp:
         else:
             self.servers = self.server_groups.get("siala", [])
         
-        self.profiles = [p.to_dict() for p in settings.profiles]
+        self.profiles = list(settings.profiles)  # Store as List[Profile], not List[Dict]
         # Fix doc_path if it contains USER placeholder
         doc_path = settings.doc_path
         if "USER" in doc_path or not os.path.exists(doc_path):
@@ -690,7 +653,7 @@ class NWNManagerApp:
         data_to_export = {
             "version": "1.0",
             "timestamp": datetime.now().isoformat(),
-            "profiles": self.profiles,
+            "profiles": [p.to_dict() if hasattr(p, 'to_dict') else p for p in self.profiles],
             "servers": self.servers,
             "hotkeys": getattr(self, "hotkeys_config", {}),
             "log_monitor": self.log_monitor_state.config if hasattr(self, 'log_monitor_state') else {},
@@ -752,9 +715,40 @@ class NWNManagerApp:
             def on_restore(selected_data: dict):
                 """Apply selected data categories."""
                 try:
+                    from core.models import Profile
+                    
+                    merge_mode = selected_data.pop("_merge", False)
+                    
                     # Restore Profiles
                     if "profiles" in selected_data:
-                        self.profiles = selected_data["profiles"]
+                        imported = []
+                        for p in selected_data["profiles"]:
+                            if isinstance(p, dict):
+                                try:
+                                    imported.append(Profile.from_dict(p))
+                                except Exception:
+                                    imported.append(p)
+                            else:
+                                imported.append(p)
+                        
+                        if merge_mode:
+                            # Build set of existing profile identifiers
+                            existing_ids = set()
+                            for ep in self.profiles:
+                                name = ep.playerName if hasattr(ep, 'playerName') else ep.get("playerName", "")
+                                key = ep.cdKey if hasattr(ep, 'cdKey') else ep.get("cdKey", "")
+                                existing_ids.add((name, key))
+                            
+                            added = 0
+                            for ip in imported:
+                                name = ip.playerName if hasattr(ip, 'playerName') else ip.get("playerName", "")
+                                key = ip.cdKey if hasattr(ip, 'cdKey') else ip.get("cdKey", "")
+                                if (name, key) not in existing_ids:
+                                    self.profiles.append(ip)
+                                    existing_ids.add((name, key))
+                                    added += 1
+                        else:
+                            self.profiles = imported
                     
                     # Restore Servers
                     if "servers" in selected_data:
@@ -811,7 +805,8 @@ class NWNManagerApp:
                     
                     self.save_data()
                     self.refresh_list()
-                    self.refresh_server_list()
+                    if hasattr(self, '_create_server_buttons'):
+                        self._create_server_buttons()
                     
                     messagebox.showinfo(
                         "Restore Complete",
@@ -1519,54 +1514,8 @@ class NWNManagerApp:
     # === СПИСОК ПРОФИЛЕЙ / DND ===
 
     def on_right_click(self, event):
-        idx = self.lb.nearest(event.y)
-        if idx < 0 or idx >= len(self.view_map):
-            return
-
-        self.lb.selection_clear(0, tk.END)
-        self.lb.selection_set(idx)
-        self.on_select(None)
-
-        item = self.view_map[idx]
-        if item["type"] == "header":
-            self.show_header_menu(event, item["data"])
-        else:
-            self.show_profile_menu(event)
-
-    def show_header_menu(self, event, category_name: str):
-        menu = tk.Menu(
-            self.root,
-            tearoff=0,
-            bg=COLORS["bg_panel"],
-            fg=COLORS["fg_text"],
-            activebackground=COLORS["accent"],
-        )
-        menu.add_command(
-            label=f"Rename '{category_name}'",
-            command=lambda: self.rename_category(category_name),
-        )
-        menu.post(event.x_root, event.y_root)
-
-    def show_profile_menu(self, event):
-        menu = tk.Menu(
-            self.root,
-            tearoff=0,
-            bg=COLORS["bg_panel"],
-            fg=COLORS["fg_text"],
-            activebackground=COLORS["accent"],
-        )
-        menu.add_command(label="Launch", command=self.launch_game)
-        menu.add_separator()
-        
-        # Crafter toggle
-        is_crafter = bool(self.current_profile.get("is_crafter", False)) if self.current_profile else False
-        crafter_label = "✓ Crafter" if is_crafter else "Set as Crafter"
-        menu.add_command(label=crafter_label, command=self.toggle_crafter)
-        
-        menu.add_separator()
-        menu.add_command(label="Edit", command=self.edit_profile)
-        menu.add_command(label="Delete", command=self.delete_profile)
-        menu.post(event.x_root, event.y_root)
+        """Handle right click on profile list."""
+        self.profile_manager.show_profile_menu(event)
     
     def toggle_crafter(self):
         """Toggle crafter status for current profile"""
@@ -1719,6 +1668,8 @@ class NWNManagerApp:
         return key in self.sessions.sessions
 
     def detect_existing_session(self):
+        import subprocess
+
         """Detect an existing nwmain.exe process and add it to sessions if matches a profile."""
         exe_path = (self.exe_path_var.get() or "").strip()
         # If exe path not configured, fallback to default NWN executable name
@@ -1985,6 +1936,8 @@ class NWNManagerApp:
     # === ЗАПУСК / ЗАКРЫТИЕ ИГРЫ ===
 
     def launch_game(self):
+        import subprocess
+
         if not self.current_profile:
             messagebox.showwarning(
                 "Error", "Select a profile!", parent=self.root

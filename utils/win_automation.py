@@ -1,9 +1,6 @@
 import ctypes
 import os
-import subprocess
 import time
-import shutil
-import winreg
 import re
 
 
@@ -160,6 +157,8 @@ class INPUT_STRUCT(ctypes.Structure):
 # === SAFE FILE REPLACEMENT ===
 
 def safe_replace(src: str, dst: str) -> None:
+    import shutil
+
     """
     Замена файла без использования shutil.replace, чтобы избежать бага
     'shutil has no attribute replace' на некоторых сборках.
@@ -212,6 +211,8 @@ def safe_exit_sequence(
     clip_margin: int | None = None,
 ) -> None:
     """Автоматическая последовательность выхода из игры с кликами по координатам."""
+    import subprocess
+
     try:
         hwnd = get_hwnd_from_pid(pid)
         if not hwnd:
@@ -574,6 +575,7 @@ def safe_exit_sequence(
 
 def auto_detect_nwn_path() -> str | None:
     """Попытка найти путь к nwmain.exe через реестр Steam/GOG."""
+    import winreg
     paths_to_check = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 704450",
         r"SOFTWARE\GOG.com\Games\1207658960",
@@ -1035,6 +1037,9 @@ FR_PRIVATE = 0x10
 
 gdi32 = ctypes.windll.gdi32
 
+# Cache flag to avoid loading fonts multiple times
+_fonts_loaded = False
+
 def load_custom_fonts(fonts_dir: str = None) -> list:
     """Load custom TTF fonts from the fonts directory for this app session.
     
@@ -1047,6 +1052,13 @@ def load_custom_fonts(fonts_dir: str = None) -> list:
     Returns:
         List of successfully loaded font file names.
     """
+    global _fonts_loaded
+    
+    # Skip if already loaded
+    if _fonts_loaded:
+        return []
+    
+    _fonts_loaded = True
     loaded = []
     
     try:
@@ -1090,6 +1102,7 @@ def load_custom_fonts(fonts_dir: str = None) -> list:
     
     return loaded
 def set_run_on_startup(enabled: bool) -> bool:
+    import winreg
     """Add or remove the application from Windows Startup (HKCU\\...\\Run)."""
     try:
         import sys

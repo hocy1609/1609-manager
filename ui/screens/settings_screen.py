@@ -90,22 +90,14 @@ def build_settings_screen(app):
             theme_changed = (new_theme != self.theme)
             self.theme = new_theme
             
-            # Apply theme if changed
-            if theme_changed:
-                try:
-                    import ui.ui_base as _uib
-                    _uib.set_theme(self.theme, root=self.root)
-                except Exception as e:
-                    self.log_error("SettingsScreen._do_save.set_theme", e)
-            
             self.save_data()
             
-            # Rebuild UI if theme changed
+            # Apply theme if changed — calls set_theme() + full UI rebuild
             if theme_changed:
                 try:
-                    self._rebuild_current_screen()
+                    self.apply_theme()
                 except Exception as e:
-                    self.log_error("SettingsScreen._do_save.rebuild_ui", e)
+                    self.log_error("SettingsScreen._do_save.apply_theme", e)
         except (ValueError, AttributeError):
             pass  # Invalid input, don't save
 
