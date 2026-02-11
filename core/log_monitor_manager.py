@@ -309,6 +309,12 @@ class LogMonitorManager:
 
                 cfg = self.app.log_monitor_state.config.get("auto_fog", {})
                 if cfg and cfg.get("enabled"):
+                    # Check session count - fog only works with exactly 1 session
+                    session_count = len(getattr(self.app.sessions, 'sessions', {}) or {})
+                    if session_count > 1:
+                        print(f"[AutoFog] SKIPPING - multiple sessions active ({session_count})")
+                        return
+                    
                     print(f"[LogMonitor] Auto-Fog triggered at {current_ts}!")
                     
                     # Instant execution in thread to not block UI/monitor

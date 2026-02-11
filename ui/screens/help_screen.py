@@ -24,7 +24,6 @@ WORKFLOW:
 1. Add profiles in Home screen
 2. Configure craft settings in Craft screen
 3. Use START button to begin crafting
-4. Record drag macro, then use DRAG POTIONS to replay
 5. Alt+Tab stops recording and playback
 
 Press ESC to return to Home screen from dialogs.

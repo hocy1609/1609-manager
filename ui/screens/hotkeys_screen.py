@@ -125,6 +125,15 @@ def build_hotkeys_screen(app):
     # Hotkeys list management
     def _refresh_hotkeys_list():
         """Refresh the hotkeys list UI."""
+        # Always read live config from app (may have been replaced by restore)
+        nonlocal hotkeys_cfg
+        hotkeys_cfg = getattr(self, 'hotkeys_config', hotkeys_cfg)
+        # Sync enabled var
+        try:
+            self.hotkeys_enabled_var.set(hotkeys_cfg.get("enabled", False))
+        except Exception:
+            pass
+
         for widget in scrollable_frame.winfo_children():
             widget.destroy()
         
@@ -145,6 +154,9 @@ def build_hotkeys_screen(app):
         
         # Ensure scroll works after rebuild
         self.root.after(100, lambda: _bind_to_mousewheel(scrollable_frame))
+    
+    # Expose for external callers (e.g. restore callback)
+    self._refresh_hotkeys_list = _refresh_hotkeys_list
 
     def _create_hotkey_row(idx, bind):
         """Create a single row for a hotkey."""

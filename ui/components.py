@@ -64,7 +64,7 @@ class TitleBar:
                     size_part = self._normal_geometry.split('+')[0]
                     w, h = map(int, size_part.split('x'))
                 except:
-                    w, h = 1100, 600
+                    w, h = max(900, min(int(sw * 0.55), 1600)), max(500, min(int(sh * 0.65), 1000))
                 
                 # Center on screen
                 x = (sw - w) // 2
@@ -275,6 +275,35 @@ class StatusBar:
         self._fog_icon.bind("<Button-1>", lambda e: self._toggle_auto_fog())
         self.labels["auto_fog"].bind("<Button-1>", lambda e: self._toggle_auto_fog())
 
+        # Inline tooltip for fog single-session restriction
+        def _fog_show_tip(e):
+            # Close existing tip if any to prevent stacking
+            existing_tip = getattr(fog_frame, '_tooltip_win', None)
+            if existing_tip:
+                try:
+                    existing_tip.destroy()
+                except:
+                    pass
+            
+            tip = tk.Toplevel(fog_frame)
+            tip.wm_overrideredirect(True)
+            tip.wm_geometry(f"+{e.x_root+10}+{e.y_root+10}")
+            lbl = tk.Label(tip, text="Работает только при 1 активной сессии",
+                           bg=COLORS.get("tooltip_bg", "#1E2128"),
+                           fg=COLORS["fg_text"], font=("Segoe UI", 9), padx=8, pady=4)
+            lbl.pack()
+            fog_frame._tooltip_win = tip
+
+        def _fog_hide_tip(e):
+            tip = getattr(fog_frame, '_tooltip_win', None)
+            if tip:
+                tip.destroy()
+                fog_frame._tooltip_win = None
+
+        for _fw in [fog_frame, self._fog_icon, self.labels["auto_fog"]]:
+            _fw.bind("<Enter>", _fog_show_tip, add="+")
+            _fw.bind("<Leave>", _fog_hide_tip, add="+")
+
         # Separator before Slayer (now at end)
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
         
@@ -459,8 +488,12 @@ class StatusBar:
             auto_fog_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
             fog_enabled = auto_fog_cfg.get("enabled", False)
             fog_active = fog_enabled and log_on
+            fog_paused = fog_enabled and session_count > 1
             
-            if fog_active:
+            if fog_paused:
+                fog_text = "Fog: Paused"
+                fog_fg = COLORS["warning"]
+            elif fog_active:
                 fog_text = "Fog: On"
                 fog_fg = COLORS["success"]
             elif fog_enabled:
@@ -473,8 +506,12 @@ class StatusBar:
             if hasattr(self, '_fog_icon'):
                 self._fog_icon.config(fg=fog_fg)
             
-            # Slayer status - NOW REQUIRES LOG MONITOR TO BE ON (no independent monitor)
+            # Slayer visibility: only show for non-siala server groups
+            current_group = getattr(self.app, 'server_group', 'siala')
+            self.set_slayer_visibility(current_group != 'siala')
+            
             # Slayer status
+
             slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
             slayer_enabled = slayer_cfg.get("enabled", False)
             

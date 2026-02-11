@@ -45,27 +45,13 @@ class UIStateManager:
         # Get screen dimensions
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         
-        # Base dimensions (designed for 1080p / 100% scaling)
-        base_width, base_height = 1100, 600
-        min_width, min_height = 900, 500
+        # Percentage-based sizing relative to screen resolution
+        width = int(sw * 0.55)
+        height = int(sh * 0.65)
         
-        # For 4K+ displays, scale the initial window size proportionally
-        # but use a gentler curve to not make it excessively large
-        if dpi_scale > 1.5:
-            # For very high DPI, use logarithmic scaling
-            effective_scale = 1.0 + (dpi_scale - 1.0) * 0.6
-        else:
-            effective_scale = dpi_scale
-        
-        # Calculate initial window size
-        width = int(base_width * effective_scale)
-        height = int(base_height * effective_scale)
-        
-        # Ensure window fits on screen with margin
-        max_width = int(sw * 0.9)
-        max_height = int(sh * 0.85)
-        width = min(width, max_width)
-        height = min(height, max_height)
+        # Clamp to reasonable bounds
+        width = max(900, min(width, 1600))
+        height = max(500, min(height, 1000))
         
         # Center window on screen
         x = (sw - width) // 2
@@ -74,10 +60,12 @@ class UIStateManager:
         
         # Allow resizing with minimum constraints
         root.resizable(True, True)
-        root.minsize(min_width, min_height)
+        root.minsize(900, 500)
         
         root.configure(bg=COLORS["bg_root"])
         root.overrideredirect(True)
+        
+        print(f"[Window] Screen: {sw}x{sh}, DPI: {dpi_scale}, Window: {width}x{height}")
 
     def initialize_state(self):
         """Initialize UI-related state and Tk variables."""

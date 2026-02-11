@@ -284,6 +284,11 @@ def build_log_monitor_screen(app):
     tk.Label(af_inner, text="Auto-type '##mainscene.fog 0' in PvP Areas:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).pack(side="left", padx=(0, 10))
     ToggleSwitch(af_inner, variable=self.log_monitor_state.auto_fog_enabled_var).pack(side="left", padx=(0, 20))
 
+    # Hint about single-session restriction
+    tk.Label(af_inner, text="⚠ Только при одной активной сессии",
+             bg=COLORS["bg_root"], fg=COLORS["warning"],
+             font=("Segoe UI", 9)).pack(side="left", padx=(5, 0))
+
 
 
     # Status (Auto-saved)

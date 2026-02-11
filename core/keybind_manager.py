@@ -304,8 +304,28 @@ class MultiHotkeyManager:
     def _execute_action(self, action: HotkeyAction):
         """Execute a hotkey action."""
         try:
-            # Focus NWN window if game is running (should be already if we got hotkey)
-            self._focus_game_window()
+            # Check if current foreground window is one of our sessions
+            fg_hwnd = user32.GetForegroundWindow()
+            is_nwn_focused = False
+            
+            if fg_hwnd:
+                fg_pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(fg_pid))
+                current_pid = fg_pid.value
+                
+                sessions = getattr(self.app.sessions, 'sessions', None) or {}
+                # Check if currently focused PID is a known session
+                for k, pid_str in sessions.items():
+                    try:
+                        if int(pid_str) == current_pid:
+                            is_nwn_focused = True
+                            break
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Only force focus if we are NOT already in a game window
+            if not is_nwn_focused:
+                self._focus_game_window()
             
             if action.right_click:
                 right_click_and_send_sequence(action.sequence)
@@ -337,7 +357,7 @@ class MultiHotkeyManager:
                     pid = int(pid_str)
                     if pid == current_pid:
                         return True
-                except:
+                except (ValueError, TypeError):
                     continue
             return False
         except Exception:

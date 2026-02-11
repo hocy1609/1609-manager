@@ -3,6 +3,7 @@ import json
 import sys
 import time
 import threading
+import subprocess
 import stat
 import tempfile
 import atexit
@@ -228,6 +229,10 @@ class NWNManagerApp:
 
         self.setup_styles()
         self.load_data()
+        
+        # Re-apply ttk styles after load_data, because load_data calls set_theme()
+        # which updates COLORS. The initial setup_styles() above used default colors.
+        self.setup_styles()
         
         # Initialize sessions from loaded settings
         self.sessions.init_from_settings(self._settings_sessions)
@@ -807,6 +812,9 @@ class NWNManagerApp:
                     self.refresh_list()
                     if hasattr(self, '_create_server_buttons'):
                         self._create_server_buttons()
+                    # Refresh hotkeys screen if it was built
+                    if hasattr(self, '_refresh_hotkeys_list'):
+                        self._refresh_hotkeys_list()
                     
                     messagebox.showinfo(
                         "Restore Complete",
@@ -1994,7 +2002,9 @@ class NWNManagerApp:
             cmd.extend(args.split())
 
         try:
-            proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe))
+            # Launch game detached so it survives launcher exit
+            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe), creationflags=creationflags)
             self.sessions.add(key, proc.pid)
             # Назначаем контролирующий профиль для ключа, если еще не назначен.
             try:
