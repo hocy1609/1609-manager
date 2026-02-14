@@ -102,6 +102,8 @@ class CraftState:
     macro_playback_stop: bool = False
     potions_count: int = 0
     thread: threading.Thread | None = None
+    session_progress: dict = field(default_factory=dict)
+    session_progress: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -2026,20 +2028,47 @@ class NWNManagerApp:
         key = self.current_profile["cdKey"]
         if key in self.sessions.sessions:
             pid = self.sessions.sessions[key]
+
             def _safe_exit_wrapper():
                 try:
-                    safe_exit_sequence(
-                        pid,
-                        self.exit_x,
-                        self.exit_y,
-                        self.confirm_x,
-                        self.confirm_y,
-                        speed=getattr(self, "exit_speed", None),
-                        esc_count=getattr(self, "esc_count", None),
-                        clip_margin=getattr(self, "clip_margin", None),
-                    )
+                    # Retry up to 5 times
+                    for attempt in range(5):
+                        # Check if game window still exists
+                        if not get_hwnd_from_pid(pid):
+                            break
+
+                        # Determine speed multiplier
+                        # If exit_speed is 0.1 (default fast), allow it.
+                        # safe_exit_sequence handles defaults if None.
+                        current_speed = getattr(self, "exit_speed", None)
+                        
+                        safe_exit_sequence(
+                            pid,
+                            self.exit_x,
+                            self.exit_y,
+                            self.confirm_x,
+                            self.confirm_y,
+                            speed=current_speed,
+                            esc_count=getattr(self, "esc_count", None),
+                            clip_margin=getattr(self, "clip_margin", None),
+                        )
+
+                        # Wait up to 0.5 seconds for the window to close (speeded up)
+                        # Check every 0.1s
+                        for _ in range(5):
+                            time.sleep(0.1)
+                            if not get_hwnd_from_pid(pid):
+                                break
+                        
+                        # If window is gone, stop retrying
+                        if not get_hwnd_from_pid(pid):
+                            break
+                        
+                        # Otherwise continue to next attempt
+                        
                 except Exception as e:
                     self.log_error("close_game.safe_exit", e)
+                
                 # Ensure sessions cleaned and UI updated on main thread
                 try:
                     self.sessions.cleanup_dead()
@@ -2070,6 +2099,12 @@ class NWNManagerApp:
                 except Exception:
                     break
                 time.sleep(GAME_EXIT_CHECK_INTERVAL)
+        
+            # Check if session is still active (close failed)
+            if key in self.sessions.sessions:
+                self.log_error("restart_game", Exception("Failed to close game within timeout. Aborting restart."))
+                return
+
             try:
                 self.root.after(0, self.launch_game)
             except Exception:

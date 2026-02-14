@@ -758,8 +758,29 @@ def right_click_and_send_sequence(keys: list, delay: float = 0.05):
     press_key_sequence(keys, delay)
 
 def press_key_by_name(key_name: str):
-    """Нажимает клавишу по её строковому имени (например, 'F10', '4', 'R')."""
-    key_upper = key_name.upper()
+    """Нажимает клавишу по её строковому имени (например, 'F10', '4', 'R', 'SHIFT+F1')."""
+    key_upper = key_name.upper().strip()
+    
+    # Check for combinations (e.g. "SHIFT+F1", "CTRL+C")
+    if "+" in key_upper:
+        parts = [p.strip() for p in key_upper.split("+")]
+        modifiers = {"CTRL": False, "SHIFT": False, "ALT": False}
+        main_key = None
+        
+        for part in parts:
+            if part in ["CTRL", "CONTROL", "LCTRL", "RCTRL"]:
+                modifiers["CTRL"] = True
+            elif part in ["SHIFT", "LSHIFT", "RSHIFT"]:
+                modifiers["SHIFT"] = True
+            elif part in ["ALT", "MENU", "LALT", "RALT"]:
+                modifiers["ALT"] = True
+            else:
+                main_key = part
+        
+        if main_key:
+            press_key_with_modifiers(main_key, ctrl=modifiers["CTRL"], shift=modifiers["SHIFT"], alt=modifiers["ALT"])
+            return
+
     vk = VK_MAP.get(key_upper)
     
     if not vk:

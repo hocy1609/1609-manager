@@ -32,7 +32,7 @@ INLINE_ACTION_HIDE_DELAY_MS = 150
 DEFAULT_EXIT_SPEED = 0.1
 
 # Timeout for waiting for game process to exit during restart
-GAME_EXIT_TIMEOUT_SECONDS = 30
+GAME_EXIT_TIMEOUT_SECONDS = 5
 
 # Sleep interval when waiting for game exit
 GAME_EXIT_CHECK_INTERVAL = 0.1
