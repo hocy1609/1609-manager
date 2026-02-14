@@ -813,3 +813,184 @@ class CraftManager:
             print(f"[Craft] Log read error: {e}")
         
         return count_increase, error_msg
+
+    def _craft_loop(self, queue, delay_open, delay_fixed, open_seq_str, log_path):
+        """
+        Main craft loop - runs in thread.
+        ALL ARGUMENTS must be plain data, NOT Tkinter vars.
+        """
+        from utils.win_automation import press_key_by_name
+        
+        # Initialize loop vars safely
+        total_requested = 0
+        
+        try:
+            # Parse open sequence
+            open_keys = [k.strip() for k in open_seq_str.split(",") if k.strip()]
+            
+            total_requested = sum(c for _, _, c in queue)
+            print(f"[Craft] Starting queue: {len(queue)} types, {total_requested} total items")
+            
+            # Countdown with hint to switch to NWN
+            for i in range(3, 0, -1):
+                if not self.app.craft_state.running:
+                    return
+                self.app.root.after(0, lambda n=i: self.app.craft_status_lbl.config(
+                    text=f"Переключись на NWN! {n}...", fg=COLORS["warning"]))
+                time.sleep(1)
+            
+            self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
+                text="Крафтим...", fg=COLORS["success"]))
+
+            # Initialize log monitoring (file IO is safe in thread)
+            if log_path and os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
+                        f.seek(0, 2)
+                        self.app.craft_state.log_position = f.tell()
+                    self.app.craft_state.real_count = 0
+                except Exception:
+                    print("[Craft] Failed to init log reading")
+            
+            # Step 1: Open craft menu (ONCE)
+            self._open_craft_menu(open_keys, delay_open)
+            
+            # Fixed delay for all operations
+            FIXED_DELAY = delay_fixed
+            
+            # Record Session Start & Queue
+            self.app.craft_state.session_start_time = time.time()
+            self.app.craft_state.original_queue = list(queue)
+
+            for name, seq, target_count in queue:
+                if not self.app.craft_state.running:
+                    break
+                
+                print(f"[Craft] Processing: {name} (Target: {target_count})")
+                
+                items_crafted_in_batch = 0
+                
+                while items_crafted_in_batch < target_count:
+                    if not self.app.craft_state.running:
+                        break
+                    
+                    # --- ATTEMPT CRAFT ---
+                    # Blind Fire sequence
+                    for char in seq:
+                        if not self.app.craft_state.running: break
+                        press_key_by_name(char)
+                        time.sleep(FIXED_DELAY)
+                    
+                    if not self.app.craft_state.running: break
+                        
+                    # Confirm
+                    time.sleep(FIXED_DELAY)
+                    press_key_by_name("1")
+                    
+                    self.app.craft_state.potions_count += 1
+                    
+                    # --- VERIFY ---
+                    # Wait up to 3.0s for log entry
+                    verified = self._wait_for_log_confirmation(log_path, [name], timeout=3.0)
+                    
+                    if verified:
+                        # SUCCESS
+                        items_crafted_in_batch += 1
+                        current_progress = self.app.craft_state.session_progress.get(seq, 0)
+                        self.app.craft_state.session_progress[seq] = current_progress + 1
+                        
+                        # Note: real_count is incremented inside _check_craft_log called by _wait_for_log_confirmation
+                        
+                        self._update_progress_ui(queue, total_requested, name)
+                        
+                        if items_crafted_in_batch < target_count:
+                             if not self._craft_sleep(FIXED_DELAY): break
+                    else:
+                        # FAILURE / LAG
+                        print(f"[Craft] Failed to verify {name}. Retrying/Resetting...")
+                        if not self.app.craft_state.running: break
+                        
+                        # Reset Menu
+                        self._perform_menu_reset(open_keys, delay_open)
+                        # Loop will continue and retry the same item because items_crafted_in_batch didn't increment
+
+        except Exception as e:
+            self.app.log_error("craft_loop", e)
+        finally:
+            # Press ESC to close menu
+            if self.app.craft_state.running: # Only if finished naturally
+                print("[Craft] Finishing: Pressing ESC")
+                try:
+                    press_key_by_name("ESC")
+                except:
+                    pass
+            
+            self.app.craft_state.running = False
+            self.app.root.after(0, self._craft_reset_ui, total_requested)
+
+    def _open_craft_menu(self, open_keys, delay_open):
+        """Helper to open craft menu."""
+        from utils.win_automation import press_key_by_name
+        print(f"[Craft] Opening menu")
+        for key in open_keys:
+            if not self.app.craft_state.running: return
+            press_key_by_name(key)
+            time.sleep(0.05)
+        
+        if self.app.craft_state.running:
+            self._craft_sleep(delay_open)
+
+    def _perform_menu_reset(self, open_keys, delay_open):
+        """Close and reopen menu to reset state."""
+        from utils.win_automation import press_key_by_name
+        if not self.app.craft_state.running: return
+        
+        print("[Craft] Performing Menu Reset...")
+        self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
+            text="Lag detected. Resetting menu...", fg=COLORS["warning"]))
+            
+        press_key_by_name("ESC")
+        time.sleep(1.0)
+        press_key_by_name("ESC") # Double tap safe
+        time.sleep(1.0)
+        
+        self._open_craft_menu(open_keys, delay_open)
+        
+    def _wait_for_log_confirmation(self, log_path, expected_names, timeout=3.0):
+        """Poll log for confirmation."""
+        # expected_names is list of possible names
+        start = time.time()
+        while time.time() - start < timeout:
+            if not self.app.craft_state.running: return False
+            
+            count, _ = self._check_craft_log(log_path, expected_names)
+            if count > 0:
+                return True
+            time.sleep(0.2)
+        return False
+
+    def _update_progress_ui(self, queue, total_requested, current_name):
+        """Update Status and Details UI."""
+        real_c = self.app.craft_state.real_count
+        attempts = self.app.craft_state.potions_count
+        
+        pct = (real_c / total_requested) * 100 if total_requested > 0 else 0
+        
+        details_txt = ""
+        for q_name, q_seq, q_req in queue:
+            q_done = self.app.craft_state.session_progress.get(q_seq, 0)
+            details_txt += f"{q_name}: {q_done} / {q_req}\n"
+        
+        def update_ui_safe(p_val, d_text):
+            if hasattr(self.app, "craft_progress"):
+                self.app.craft_progress["value"] = p_val
+            if hasattr(self.app, "craft_details_log"):
+                self.app.craft_details_log.configure(state="normal")
+                self.app.craft_details_log.delete("1.0", "end")
+                self.app.craft_details_log.insert("end", d_text)
+                self.app.craft_details_log.configure(state="disabled")
+
+        self.app.root.after(0, lambda n=current_name, r=real_c, t=total_requested, a=attempts: self.app.craft_status_lbl.config(
+            text=f"Crafting: {n}\nActual: {r} / {t} (Attempts: {a})", fg=COLORS["success"]))
+        
+        self.app.root.after(0, lambda p=pct, d=details_txt: update_ui_safe(p, d))
