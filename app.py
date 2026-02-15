@@ -104,6 +104,7 @@ class CraftState:
     thread: threading.Thread | None = None
     session_progress: dict = field(default_factory=dict)
     session_progress: dict = field(default_factory=dict)
+    partial_line: str = ""
 
 
 @dataclass
@@ -1527,93 +1528,7 @@ class NWNManagerApp:
         """Handle right click on profile list."""
         self.profile_manager.show_profile_menu(event)
     
-    def toggle_crafter(self):
-        """Toggle crafter status for current profile"""
-        if not self.current_profile:
-            return
-        
-        # Toggle current
-        was_crafter = bool(self.current_profile.get("is_crafter", False))
-        is_now = not was_crafter
-        self.current_profile["is_crafter"] = is_now
-        
-        if is_now:
-            name = self.current_profile.get("playerName", "Profile")
-            self.craft_status_lbl.config(text=f"Crafter: {name}", fg=COLORS["accent"])
-        else:
-            # Check if there are other crafters to update label
-            other_crafters = [p.get("playerName", "???") for p in self.profiles 
-                              if p.get("is_crafter", False) and p != self.current_profile]
-            if other_crafters:
-                self.craft_status_lbl.config(text=f"Crafter: {other_crafters[0]}", fg=COLORS["accent"])
-            else:
-                self.craft_status_lbl.config(text="No crafter set", fg=COLORS["fg_dim"])
-        
-        self.schedule_save()
-        self.refresh_list()
-    
-    def get_crafter_profile(self):
-        """Get the profile marked as crafter"""
-        for p in self.profiles:
-            if p.get("is_crafter", False):
-                return p
-        return None
-    
-    def get_crafter_hwnd(self):
-        """Get window handle of crafter's NWN process"""
-        crafter = self.get_crafter_profile()
-        if not crafter:
-            return None
-        
-        cd_key = crafter.get("cdKey")
-        if not cd_key or cd_key not in self.sessions.sessions:
-            return None
-        
-        pid = self.sessions.sessions[cd_key]
-        if not self.sessions.is_alive(pid):
-            return None
-        
-        from utils.win_automation import user32
-        
-        # Enumerate all windows and find one with matching PID
-        found_hwnd = [None]
-        
-        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        def callback(hwnd, lParam):
-            window_pid = ctypes.c_ulong()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
-            
-            if window_pid.value == pid and user32.IsWindowVisible(hwnd):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    found_hwnd[0] = hwnd
-                    return False
-            return True
-        
-        user32.EnumWindows(callback, 0)
-        return found_hwnd[0]
-    
-    def activate_crafter_window(self):
-        """Activate crafter's NWN window, returns True if successful"""
-        hwnd = self.get_crafter_hwnd()
-        if not hwnd:
-            return False
-        
-        from utils.win_automation import user32
-        
-        try:
-            # Restore if minimized
-            if user32.IsIconic(hwnd):
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            
-            # Bring to foreground
-            user32.SetForegroundWindow(hwnd)
-            time.sleep(0.3)
-            
-            # Verify it's now foreground
-            return user32.GetForegroundWindow() == hwnd
-        except Exception:
-            return False
+
 
     def rename_category(self, old_name: str):
         dialog = CustomInputDialog(

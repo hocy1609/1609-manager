@@ -392,10 +392,7 @@ class ProfileManager:
             # Launch options
             menu.add_command(label="Launch", command=self.app.launch_game)
             
-            # Crafter toggle
-            is_crafter = bool(_get_attr(prof, "is_crafter", False))
-            lbl = "Unmark as Crafter" if is_crafter else "Mark as Crafter"
-            menu.add_command(label=lbl, command=self.app.toggle_crafter)
+
             
             menu.post(event.x_root, event.y_root)
 
