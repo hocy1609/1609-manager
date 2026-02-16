@@ -718,12 +718,20 @@ class CraftManager:
 
     def _wait_for_nwn_focus(self):
         """Wait for NWN window to be in foreground. Returns False if stopped."""
-        from utils.win_automation import is_nwn_foreground
+        from utils.win_automation import is_nwn_foreground, focus_nwn_window
         
         if is_nwn_foreground():
             return True
         
-        print("[Craft] NWN lost focus — pausing")
+        # Try to auto-focus NWN window
+        print("[Craft] NWN lost focus — attempting auto-focus")
+        if focus_nwn_window(delay=0.3):
+            if is_nwn_foreground():
+                print("[Craft] NWN auto-focused successfully")
+                return True
+        
+        # Auto-focus failed — wait for user
+        print("[Craft] Auto-focus failed — waiting for NWN window")
         self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
             text="⏸ NWN не в фокусе! Ожидание...", fg=COLORS["warning"]))
         
