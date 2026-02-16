@@ -265,6 +265,13 @@ class Settings:
     run_on_startup: bool = False
     # User-defined category order (list of category names)
     category_order: List[str] = field(default_factory=list)
+    # Craft timing settings
+    craft_timing: Dict[str, Any] = field(default_factory=lambda: {
+        "delay_open": 4.0,
+        "delay_key": 0.15,
+        "delay_craft": 0.2,
+        "open_sequence": "F11",
+    })
 
     @classmethod
     def defaults(cls, docs: str, exe: str) -> "Settings":
@@ -331,6 +338,12 @@ class Settings:
             minimize_to_tray=_clean_bool(data.get("minimize_to_tray", True)),
             run_on_startup=_clean_bool(data.get("run_on_startup", False)),
             category_order=[_clean_str(c) for c in _clean_list(data.get("category_order", []))],
+            craft_timing=data.get("craft_timing", {
+                "delay_open": 4.0,
+                "delay_key": 0.15,
+                "delay_craft": 0.2,
+                "open_sequence": "F11",
+            }),
         )
 
     def to_dict(self) -> Dict[str, Any]:

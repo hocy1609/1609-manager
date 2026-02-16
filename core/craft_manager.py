@@ -24,6 +24,12 @@ class CraftManager:
     
     Takes a reference to the main app to access its state and UI elements.
     """
+
+    # Aliases for potions whose menu name differs from the actual log name.
+    # Keys and values should be lowercase.
+    NAME_ALIASES = {
+        "зелье исцеления смертельных ран": "зелье исцеления критических ран",
+    }
     
     def __init__(self, app):
         """
@@ -42,13 +48,21 @@ class CraftManager:
         import tkinter as tk
         from app import CraftState
 
+        # Read saved timing values, with sensible defaults
+        saved = getattr(self.app, "craft_timing", {})
+        d_open = float(saved.get("delay_open", 4.0))
+        d_key = float(saved.get("delay_key", 0.15))
+        d_craft = float(saved.get("delay_craft", 0.2))
+        open_seq = str(saved.get("open_sequence", "F11"))
+
         self.app.craft_state = CraftState(
             running=False,
             vars={
-                "open_sequence": tk.StringVar(value="F11"),
-                "delay_open": tk.DoubleVar(value=4.0), # Increased delay for initial menu open
+                "open_sequence": tk.StringVar(value=open_seq),
+                "delay_open": tk.DoubleVar(value=d_open),
+                "delay_key": tk.DoubleVar(value=d_key),
+                "delay_craft": tk.DoubleVar(value=d_craft),
                 "potion_limit": tk.IntVar(value=100),
-                # Fixed delays internally: 0.2s
             },
             log_path=tk.StringVar(value=""),
             log_position=0,
@@ -77,6 +91,22 @@ class CraftManager:
         self.load_favorites()
         self.app._craft_state_initialized = True
         self.load_presets()
+
+        # Auto-save timing changes
+        def _on_timing_change(*_args):
+            try:
+                self.app.craft_timing = {
+                    "delay_open": self.app.craft_state.vars["delay_open"].get(),
+                    "delay_key": self.app.craft_state.vars["delay_key"].get(),
+                    "delay_craft": self.app.craft_state.vars["delay_craft"].get(),
+                    "open_sequence": self.app.craft_state.vars["open_sequence"].get(),
+                }
+                self.app.schedule_save()
+            except Exception:
+                pass
+
+        for var_name in ("delay_open", "delay_key", "delay_craft", "open_sequence"):
+            self.app.craft_state.vars[var_name].trace_add("write", _on_timing_change)
 
     def load_presets(self):
         """Load presets from file."""
@@ -344,7 +374,8 @@ class CraftManager:
         try:
             # Delays
             delay_open = max(0.15, self.app.craft_state.vars["delay_open"].get())
-            delay_fixed = 0.2
+            delay_key = max(0.05, self.app.craft_state.vars["delay_key"].get())
+            delay_craft = max(0.0, self.app.craft_state.vars["delay_craft"].get())
             open_seq_str = self.app.craft_state.vars["open_sequence"].get()
             log_path = self.app.craft_state.log_path.get()
             queue = self._build_craft_queue()
@@ -386,7 +417,7 @@ class CraftManager:
 
         self.app.craft_state.thread = threading.Thread(
             target=self._craft_loop, 
-            args=(queue, delay_open, delay_fixed, open_seq_str, log_path),
+            args=(queue, delay_open, delay_key, delay_craft, open_seq_str, log_path),
             daemon=True
         )
         self.app.craft_state.thread.start()
@@ -425,13 +456,20 @@ class CraftManager:
         self.app.craft_state.running = False
         self.app.craft_status_lbl.config(text="Stopping...", fg=COLORS["warning"])
     
-    def _craft_loop(self, queue, delay_open, delay_fixed, open_seq_str, log_path):
+    def _craft_loop(self, queue, delay_open, delay_key, delay_craft, open_seq_str, log_path):
         """Main craft loop with smart retry logic."""
         from utils.win_automation import press_key_by_name
         
         # Initialize
         total_requested = sum(c for _, _, c in queue)
         open_keys = [k.strip() for k in open_seq_str.split(",") if k.strip()]
+        
+        # Per-item progress tracking: {seq: {"name": ..., "done": 0, "total": count}}
+        self.app.craft_state.queue_progress = {}
+        for name, seq, count in queue:
+            self.app.craft_state.queue_progress[seq] = {
+                "name": name, "done": 0, "total": count
+            }
         
         # Initial Countdown
         for i in range(3, 0, -1):
@@ -440,8 +478,19 @@ class CraftManager:
                 text=f"Switch to NWN! {n}...", fg=COLORS["warning"]))
             time.sleep(1)
             
+        # Check if multiple sessions are running — if so, skip log verification
+        # because the log file only captures data from the first launched window
+        session_count = len(getattr(self.app.sessions, 'sessions', {}) or {})
+        skip_log = session_count > 1
+        if skip_log:
+            print(f"[Craft] Multiple sessions detected ({session_count}), log verification DISABLED (blind mode)")
+        
         # Init log reading
-        self._init_log_reading(log_path)
+        if not skip_log:
+            self._init_log_reading(log_path)
+        
+        # Show initial queue in details log
+        self.app.root.after(0, self._update_details_log)
         
         # Open Menu First Time
         if not self._ensure_menu_open(open_keys, delay_open):
@@ -450,7 +499,12 @@ class CraftManager:
             return
 
         self.app.craft_state.session_start_time = time.time()
-        self.app.craft_state.attempts = 0 # Track total attempts including retries
+        # Build set of expected item names (all items in queue) for log monitoring
+        expected_items = {n.lower() for n, _, _ in queue}
+        # Add known aliases (menu name ≠ log name)
+        for alias_from, alias_to in self.NAME_ALIASES.items():
+            if alias_from in expected_items:
+                expected_items.add(alias_to)
         
         try:
             for name, seq, count in queue:
@@ -460,57 +514,64 @@ class CraftManager:
                 consecutive_failures = 0
                 
                 while remaining > 0 and self.app.craft_state.running:
-                    self.app.craft_state.attempts += 1
                     
-                    # Update UI Status
+                    # Update UI Status — compact status bar
                     real = self.app.craft_state.real_count
-                    self.app.root.after(0, lambda n=name, r=remaining, d=real: self.app.craft_status_lbl.config(
-                        text=f"Crafting: {n}\nRemaining: {r}\nVerified: {d}", fg=COLORS["success"]))
+                    blind_tag = " 🔇" if skip_log else ""
+                    self.app.root.after(0, lambda n=name, r=remaining, d=real, t=total_requested, bt=blind_tag: 
+                        self.app.craft_status_lbl.config(
+                            text=f"⚗ {n}  [{count - r}/{count}]{bt}\nВсего: {d} / {t}", fg=COLORS["success"]))
                     
-                    # 1. Snapshot Log
-                    start_pos = self._get_log_pos()
+                    # 1. Execute Craft Sequence
+                    self._execute_sequence(seq, delay_key)
                     
-                    # 2. Execute Craft Sequence
-                    self._execute_sequence(seq, delay_fixed)
+                    # 2. Quick non-blocking log scan for wrong items
+                    #    Don't wait for logs — just check what's already there
+                    wrong_detected = False
+                    if not skip_log:
+                        wrong_detected = self._check_log_for_wrong_item(expected_items, log_path)
                     
-                    # 3. Verify Success
-                    # Wait up to 3 seconds for log entry (lag buffer)
-                    if self._wait_for_log_success(name, timeout=3.0, start_pos=start_pos, log_path=log_path):
-                        # SUCCESS
-                        remaining -= 1
-                        consecutive_failures = 0
-                        self.app.craft_state.real_count += 1
-                        
-                        # Update session progress
-                        current = self.app.craft_state.session_progress.get(seq, 0)
-                        self.app.craft_state.session_progress[seq] = current + 1
-                        
-                        # Update Progress Bar
-                        total_done = self.app.craft_state.real_count
-                        pct = (total_done / total_requested) * 100 if total_requested else 0
-                        self.app.root.after(0, lambda p=pct: self.app.craft_progress.configure(value=p))
-                        
-                    else:
-                        # FAILURE (Lag / Menu Closed / Wrong State)
+                    if wrong_detected:
+                        # WRONG ITEM detected in logs — menu desynced!
                         consecutive_failures += 1
-                        print(f"[Craft] Failure #{consecutive_failures} for {name}")
+                        print(f"[Craft] WRONG ITEM from log! Resetting... (#{consecutive_failures})")
                         
-                        self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
-                            text=f"Lag/Miss detected! Retrying... ({consecutive_failures})", fg=COLORS["danger"]))
+                        self.app.root.after(0, lambda cf=consecutive_failures: self.app.craft_status_lbl.config(
+                            text=f"⚠ Не то зелье! Перезапуск... ({cf})", fg=COLORS["danger"]))
                         
-                        # Stop if too many failures
                         if consecutive_failures >= 5:
-                            print("[Craft] Too many failures. Aborting.")
+                            print("[Craft] Too many wrong items. Aborting.")
                             self.app.craft_state.running = False
                             break
-                            
-                        # EMERGENCY RESET
-                        # If we failed, likely menu is closed or stuck in submenu.
-                        # Force reset to root menu.
-                        self._perform_emergency_reset(open_keys, delay_open)
                         
-                    # Pause between attempts
-                    time.sleep(delay_fixed)
+                        # Emergency reset — close menu completely and reopen
+                        self._perform_emergency_reset(open_keys, delay_open)
+                        # Don't count this attempt, retry
+                        continue
+                    
+                    # 3. Assume success (fast mode)
+                    remaining -= 1
+                    consecutive_failures = 0
+                    self.app.craft_state.real_count += 1
+                    
+                    # Update session progress
+                    current = self.app.craft_state.session_progress.get(seq, 0)
+                    self.app.craft_state.session_progress[seq] = current + 1
+                    
+                    # Update per-item progress for details log
+                    if seq in self.app.craft_state.queue_progress:
+                        self.app.craft_state.queue_progress[seq]["done"] += 1
+                    
+                    # Update Progress Bar
+                    total_done = self.app.craft_state.real_count
+                    pct = (total_done / total_requested) * 100 if total_requested else 0
+                    self.app.root.after(0, lambda p=pct: self.app.craft_progress.configure(value=p))
+                    
+                    # Update details log with per-item table
+                    self.app.root.after(0, self._update_details_log)
+                    
+                    # Pause between crafts
+                    time.sleep(delay_craft)
 
         except Exception as e:
             self.app.log_error("craft_loop", e)
@@ -557,44 +618,67 @@ class CraftManager:
             time.sleep(delay)
             press_key_by_name("1")
 
-    def _wait_for_log_success(self, item_name, timeout, start_pos, log_path):
-        """Poll log for 'Acquired Item:' for 'timeout' seconds."""
+    def _check_log_for_wrong_item(self, expected_items, log_path):
+        """Non-blocking scan of log for wrong items.
+        
+        Reads any new content since last position. If an 'Acquired Item:' 
+        line is found and the item name doesn't match any expected item,
+        returns True (wrong item detected).
+        
+        This does NOT wait — it checks whatever is already in the log.
+        """
         if not log_path or not os.path.exists(log_path):
-            return True # If no log, assume success (blind mode fallback)
+            return False
             
-        end_time = time.time() + timeout
-        
-        # We will search for ANY "Acquired Item" because sometimes the result name differs 
-        # from the recipe name (e.g. "Heal Deadly Wounds" -> "Heal Critical Wounds").
-        # Trust that if we got an item, it's the right one.
-        
-        while time.time() < end_time and self.app.craft_state.running:
-            try:
-                if not os.path.exists(log_path):
-                     time.sleep(0.5)
-                     continue
-
-                with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
-                    f.seek(start_pos)
-                    content = f.read()
-                    
-                    if not content:
-                        time.sleep(0.1)
-                        continue
-                        
-                    # Simple check for success marker
-                    if "Acquired Item:" in content:
-                        return True
-                        
-            except Exception as e:
-                pass
+        try:
+            start_pos = self.app.craft_state.log_position
+            with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
+                f.seek(start_pos)
+                content = f.read()
+                new_pos = f.tell()
                 
-            time.sleep(0.1)
+                if not content:
+                    return False
+                
+                # Advance log position
+                self.app.craft_state.log_position = new_pos
+                
+                # Scan for "Acquired Item:" lines
+                for line in content.split('\n'):
+                    if "Acquired Item:" not in line:
+                        continue
+                    
+                    acquired = line.split("Acquired Item:", 1)[1].strip()
+                    acquired_lower = acquired.lower()
+                    
+                    # Check if ANY expected item name is a substring of acquired
+                    matched = any(exp in acquired_lower for exp in expected_items)
+                    
+                    if not matched:
+                        print(f"[Craft] ⚠ WRONG ITEM in log: '{acquired}' (expected one of: {expected_items})")
+                        return True
+                    else:
+                        print(f"[Craft] Log OK: '{acquired}' ✓")
+                        
+        except Exception:
+            pass
             
         return False
             
-        print(f"[Craft] Timed out waiting for {item_name}")
-        return False
+
+
+    def _advance_log_position(self):
+        """Advance log position to current end of file to skip stale entries."""
+        log_path = self.app.craft_state.log_path.get()
+        if log_path and os.path.exists(log_path):
+            try:
+                with open(log_path, 'r', encoding='cp1251', errors='ignore') as f:
+                    f.seek(0, 2)
+                    old_pos = self.app.craft_state.log_position
+                    self.app.craft_state.log_position = f.tell()
+                    print(f"[Craft] Log position advanced: {old_pos} -> {f.tell()}")
+            except Exception:
+                pass
 
     def _perform_emergency_reset(self, open_keys, delay_open):
         """Force reset menu state: ESC x6, then Reopen."""
@@ -609,6 +693,9 @@ class CraftManager:
             time.sleep(0.1)
             
         time.sleep(0.5)
+        
+        # Skip any log entries that appeared during the reset
+        self._advance_log_position()
         
         # Reopen
         self._ensure_menu_open(open_keys, delay_open)
@@ -648,9 +735,56 @@ class CraftManager:
         if total_requested > 0:
             real_count = self.app.craft_state.real_count
             
-            msg = f"Finished! Verified: {real_count} / {total_requested}"
+            msg = f"✅ Готово! {real_count} / {total_requested}"
             if real_count < total_requested:
-                 msg = f"Stopped. Verified: {real_count} / {total_requested}"
+                 msg = f"⏸ Остановлено: {real_count} / {total_requested}"
                  
             color = COLORS["success"] if (real_count >= total_requested) else COLORS["warning"]
             self.app.craft_status_lbl.config(text=msg, fg=color)
+            
+            # Show final summary in details log
+            self._update_details_log()
+
+    def _update_details_log(self):
+        """Update the details log with per-item progress table."""
+        if not hasattr(self.app, 'craft_details_log'):
+            return
+        if not hasattr(self.app.craft_state, 'queue_progress'):
+            return
+            
+        progress = self.app.craft_state.queue_progress
+        if not progress:
+            return
+        
+        lines = []
+        total_done = 0
+        total_all = 0
+        
+        for seq, info in progress.items():
+            name = info["name"]
+            done = info["done"]
+            total = info["total"]
+            total_done += done
+            total_all += total
+            
+            if done >= total:
+                mark = "✅"
+            elif done > 0:
+                mark = "⚗"
+            else:
+                mark = "⬚"
+            
+            lines.append(f" {mark} {name:<30s}  {done:>3} / {total}")
+        
+        lines.append(f"{'─' * 42}")
+        lines.append(f" Итого:{' ' * 24} {total_done:>3} / {total_all}")
+        
+        text = "\n".join(lines)
+        
+        try:
+            self.app.craft_details_log.configure(state="normal")
+            self.app.craft_details_log.delete("1.0", "end")
+            self.app.craft_details_log.insert("1.0", text)
+            self.app.craft_details_log.configure(state="disabled")
+        except Exception:
+            pass

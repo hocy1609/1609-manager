@@ -496,6 +496,7 @@ class NWNManagerApp:
         
         self.minimize_to_tray = settings.minimize_to_tray
         self.run_on_startup = settings.run_on_startup
+        self.craft_timing = dict(settings.craft_timing)
         self.category_order = list(settings.category_order)  # User-defined category order
 
         try:
@@ -602,6 +603,7 @@ class NWNManagerApp:
                 minimize_to_tray=getattr(self, "minimize_to_tray", True),
                 run_on_startup=getattr(self, "run_on_startup", False),
                 category_order=getattr(self, "category_order", []),
+                craft_timing=self._get_live_craft_timing(),
             )
             
             # Sync startup registry (failsafe)
@@ -1371,6 +1373,25 @@ class NWNManagerApp:
         if hasattr(self, 'craft_manager'):
             self.craft_manager._browse_craft_log()
     
+    def _get_live_craft_timing(self):
+        """Read live craft timing values from UI vars, falling back to stored dict."""
+        defaults = getattr(self, "craft_timing", {
+            "delay_open": 4.0, "delay_key": 0.15,
+            "delay_craft": 0.2, "open_sequence": "F11",
+        })
+        cs = getattr(self, "craft_state", None)
+        if cs and hasattr(cs, "vars"):
+            try:
+                return {
+                    "delay_open": cs.vars["delay_open"].get(),
+                    "delay_key": cs.vars["delay_key"].get(),
+                    "delay_craft": cs.vars["delay_craft"].get(),
+                    "open_sequence": cs.vars["open_sequence"].get(),
+                }
+            except Exception:
+                pass
+        return defaults
+
     def _open_craft_settings(self):
         """Open craft settings. Delegates to CraftManager."""
         if hasattr(self, 'craft_manager'):

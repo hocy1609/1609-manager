@@ -46,9 +46,8 @@ def build_craft_screen(app):
     timing_inner.pack(fill="x", padx=15, pady=10)
 
     self._craft_row(timing_inner, 0, "Задержка открытия меню:", self.craft_state.vars["delay_open"])
-    # self._craft_row(timing_inner, 1, "Задержка между клавишами:", self.craft_state.vars["delay_key"])
-    # self._craft_row(timing_inner, 2, "Пауза между крафтами:", self.craft_state.vars["delay_between"])
-    # Fixed delays (0.2s) - UI removed as requested.
+    self._craft_row(timing_inner, 1, "Задержка между клавишами:", self.craft_state.vars["delay_key"])
+    self._craft_row(timing_inner, 2, "Пауза между крафтами:", self.craft_state.vars["delay_craft"])
     
     # ... (rest of UI building) ...
 
@@ -78,13 +77,17 @@ def build_craft_screen(app):
     self.update_craft_queue_ui = update_queue_calls
     
     # Open Sequence moved here
-    tk.Label(timing_inner, text="Seq Открытия:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], anchor="w").grid(
-        row=3, column=0, sticky="w", pady=2
+    tk.Label(timing_inner, text="Brew Potion Location:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], anchor="w").grid(
+        row=4, column=0, sticky="w", pady=2
     )
-    tk.Entry(
+    seq_entry = tk.Entry(
         timing_inner, textvariable=self.craft_state.vars["open_sequence"], width=35, bg=COLORS["bg_input"], 
         fg=COLORS["fg_text"], relief="flat", insertbackground=COLORS["fg_text"]
-    ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=2)
+    )
+    seq_entry.grid(row=4, column=1, sticky="w", padx=(10, 0), pady=2)
+    # Hint label below the entry
+    tk.Label(timing_inner, text="F1-12, Ctrl, Shift", bg=COLORS["bg_root"], fg=COLORS["fg_dim"],
+             font=("Segoe UI", 7), anchor="w").grid(row=5, column=1, sticky="w", padx=(10, 0))
 
 
 
@@ -212,7 +215,7 @@ def build_craft_screen(app):
     # Detailed Status Log
     self.craft_details_log = tk.Text(
         controls_inner,
-        height=4,
+        height=10,
         bg=COLORS["bg_input"],
         fg=COLORS["fg_text"],
         font=("Consolas", 9),

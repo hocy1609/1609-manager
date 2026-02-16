@@ -797,6 +797,7 @@ def press_key_by_name(key_name: str):
         try:
             scan = user32.MapVirtualKeyW(vk, 0)
             user32.keybd_event(vk, scan, 0, 0)  # Down
+            time.sleep(0.03)  # 30ms hold — NWN needs time to register the keypress
             user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)  # Up
         except Exception:
             pass
