@@ -515,12 +515,24 @@ class CraftManager:
                 
                 while remaining > 0 and self.app.craft_state.running:
                     
-                    # Update UI Status — compact status bar
+                    # Update UI Status — compact status bar + ETA
                     real = self.app.craft_state.real_count
                     blind_tag = " 🔇" if skip_log else ""
-                    self.app.root.after(0, lambda n=name, r=remaining, d=real, t=total_requested, bt=blind_tag: 
+                    eta_str = ""
+                    if real > 0:
+                        elapsed = time.time() - self.app.craft_state.session_start_time
+                        avg = elapsed / real
+                        items_left = total_requested - real
+                        eta_sec = int(avg * items_left)
+                        eta_m, eta_s = divmod(eta_sec, 60)
+                        eta_str = f"  ~{eta_m:02d}:{eta_s:02d}"
+                    self.app.root.after(0, lambda n=name, r=remaining, d=real, t=total_requested, bt=blind_tag, et=eta_str: 
                         self.app.craft_status_lbl.config(
-                            text=f"⚗ {n}  [{count - r}/{count}]{bt}\nВсего: {d} / {t}", fg=COLORS["success"]))
+                            text=f"⚗ {n}  [{count - r}/{count}]{bt}\nВсего: {d} / {t}{et}", fg=COLORS["success"]))
+                    
+                    # 0. Wait for NWN window focus (smart pause)
+                    if not self._wait_for_nwn_focus():
+                        break
                     
                     # 1. Execute Craft Sequence
                     self._execute_sequence(seq, delay_key)
@@ -686,6 +698,10 @@ class CraftManager:
         
         print("[Craft] performing EMERGENCY RESET")
         
+        # Wait for NWN focus before resetting
+        if not self._wait_for_nwn_focus():
+            return
+        
         # Mash ESC to close everything
         for _ in range(6):
             if not self.app.craft_state.running: return
@@ -699,6 +715,28 @@ class CraftManager:
         
         # Reopen
         self._ensure_menu_open(open_keys, delay_open)
+
+    def _wait_for_nwn_focus(self):
+        """Wait for NWN window to be in foreground. Returns False if stopped."""
+        from utils.win_automation import is_nwn_foreground
+        
+        if is_nwn_foreground():
+            return True
+        
+        print("[Craft] NWN lost focus — pausing")
+        self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
+            text="⏸ NWN не в фокусе! Ожидание...", fg=COLORS["warning"]))
+        
+        while self.app.craft_state.running:
+            time.sleep(0.5)
+            if is_nwn_foreground():
+                print("[Craft] NWN focus restored — resuming")
+                self.app.root.after(0, lambda: self.app.craft_status_lbl.config(
+                    text="▶ Продолжение...", fg=COLORS["success"]))
+                time.sleep(0.3)
+                return True
+        
+        return False
 
     def _craft_sleep(self, seconds):
         """Sleep with interrupt check."""

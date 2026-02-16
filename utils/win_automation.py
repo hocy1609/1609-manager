@@ -869,6 +869,22 @@ def focus_nwn_window(delay: float = 0):
         return False
 
 
+def is_nwn_foreground() -> bool:
+    """Checks if a Neverwinter Nights window is currently the foreground window."""
+    try:
+        fg = user32.GetForegroundWindow()
+        if not fg:
+            return False
+        # Check all known NWN window titles
+        for title in ("Neverwinter Nights: Enhanced Edition", "Neverwinter Nights", "nwmain"):
+            hwnd = user32.FindWindowW(None, title)
+            if hwnd and hwnd == fg:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def drag_mouse(from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.3):
     """Перетягивает мышь от одной позиции к другой"""
     try:
