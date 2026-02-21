@@ -15,16 +15,14 @@ def build_help_screen(app):
 
 NAVIGATION:
 • 🏠 Home - Manage accounts and launch game
-• 🔨 Craft - Auto-crafting and potion management
 • ⚙️ Settings - Application settings
 • 📊 Log Monitor - Monitor game logs with webhooks
 • ❓ Help - This help screen
 
 WORKFLOW:
 1. Add profiles in Home screen
-2. Configure craft settings in Craft screen
-3. Use START button to begin crafting
-5. Alt+Tab stops recording and playback
+2. Use profiles to launch and manage game accounts.
+3. Alt+Tab stops recording and playback
 
 Press ESC to return to Home screen from dialogs.
 """

@@ -87,7 +87,6 @@ class Profile:
     launchArgs: str = ""
     server: str = ""
     server_group: str = "siala"  # Which server group this profile uses
-    is_crafter: bool = False
     order: int = 0  # Manual ordering within category
 
     @classmethod
@@ -100,7 +99,6 @@ class Profile:
             launchArgs=_clean_str(data.get("launchArgs", "")),
             server=_clean_str(data.get("server", "")),
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
-            is_crafter=_clean_bool(data.get("is_crafter", False)),
             order=_clean_int(data.get("order", 0)),
         )
 
@@ -245,7 +243,6 @@ class Settings:
     clip_margin: int = 48
     show_tooltips: bool = True
     theme: str = "dark"
-    favorite_potions: List[str] = field(default_factory=list)
     # Server groups
     server_group: str = "siala"  # Current active group: "siala" or "cormyr"
     server_groups: Dict[str, List[Dict[str, str]]] = field(default_factory=lambda: {
@@ -265,13 +262,6 @@ class Settings:
     run_on_startup: bool = False
     # User-defined category order (list of category names)
     category_order: List[str] = field(default_factory=list)
-    # Craft timing settings
-    craft_timing: Dict[str, Any] = field(default_factory=lambda: {
-        "delay_open": 4.0,
-        "delay_key": 0.15,
-        "delay_craft": 0.2,
-        "open_sequence": "F11",
-    })
 
     @classmethod
     def defaults(cls, docs: str, exe: str) -> "Settings":
@@ -331,19 +321,12 @@ class Settings:
             esc_count=_clean_int(data.get("esc_count", 1)),
             clip_margin=_clean_int(data.get("clip_margin", 48)),
             theme=_clean_str(data.get("theme", "dark")) or "dark",
-            favorite_potions=[_clean_str(p) for p in _clean_list(data.get("favorite_potions", []))],
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
             server_groups=server_groups_raw,
             saved_keys=_clean_list(data.get("saved_keys", [])),
             minimize_to_tray=_clean_bool(data.get("minimize_to_tray", True)),
             run_on_startup=_clean_bool(data.get("run_on_startup", False)),
             category_order=[_clean_str(c) for c in _clean_list(data.get("category_order", []))],
-            craft_timing=data.get("craft_timing", {
-                "delay_open": 4.0,
-                "delay_key": 0.15,
-                "delay_craft": 0.2,
-                "open_sequence": "F11",
-            }),
         )
 
     def to_dict(self) -> Dict[str, Any]:

@@ -838,49 +838,137 @@ def press_key_sequence(keys: list, delay: float = 0.05):
         time.sleep(delay)
 
 
-def focus_nwn_window(delay: float = 0):
-    """Активирует окно Neverwinter Nights и ждет задержку"""
+def _get_process_name(hwnd: int) -> str:
+    """Get the executable name for the process that owns the given window handle."""
+    try:
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return ""
+        h_proc = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | 0x0010, False, pid.value)  # 0x0010 = PROCESS_VM_READ
+        if not h_proc:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(260)
+            # QueryFullProcessImageNameW is more reliable than GetModuleFileNameEx
+            size = ctypes.c_ulong(260)
+            ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(h_proc, 0, buf, ctypes.byref(size))
+            if ok:
+                return os.path.basename(buf.value).lower()
+            return ""
+        finally:
+            kernel32.CloseHandle(h_proc)
+    except Exception:
+        return ""
+
+
+def _find_nwn_hwnd():
+    """Find a visible NWN window by scanning all top-level windows for nwmain.exe."""
+    result = [None]
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def callback(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            proc_name = _get_process_name(hwnd)
+            if proc_name == "nwmain.exe":
+                result[0] = hwnd
+                return False  # stop enumeration
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return result[0]
+
+
+def _find_main_window_for_pid(pid: int) -> int | None:
+    """Find the main visible window for a given PID."""
+    if not pid:
+        return None
+        
+    result = [None]
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def callback(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            p = ctypes.c_ulong(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+            if p.value == pid:
+                # Found a visible window for this PID. 
+                # Ideally we want the "main" one. NWN usually has just one visible main window.
+                # Avoid tool windows if possible
+                style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                if not (style & WS_EX_TOOLWINDOW):
+                    result[0] = hwnd
+                    return False # Stop
+        return True
+
+    try:
+        user32.EnumWindows(callback, 0)
+    except Exception:
+        pass
+        
+    return result[0]
+
+
+def focus_nwn_window(delay: float = 0, pid: int = None):
+    """Activate NWN window. 
+    
+    If pid is provided, attempts to find and focus that specific process's window.
+    Otherwise, falls back to finding any 'nwmain.exe' window.
+    """
     try:
         if delay > 0:
             time.sleep(delay)
         
-        # Ищем окно Neverwinter Nights
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        
-        # Поиск окна по названию
-        hwnd = user32.FindWindowW(None, "Neverwinter Nights: Enhanced Edition")
+        hwnd = None
+        if pid:
+            hwnd = _find_main_window_for_pid(pid)
+            
         if not hwnd:
-            hwnd = user32.FindWindowW(None, "Neverwinter Nights")
-        if not hwnd:
-            hwnd = user32.FindWindowW(None, "nwmain")
+            # Fallback to process name search
+            hwnd = _find_nwn_hwnd()
         
         if hwnd:
-            # Активируем окно
             user32.SetForegroundWindow(hwnd)
+            # If minimized, restore it
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9) # SW_RESTORE
             time.sleep(0.1)
-            print(f"[Focus] NWN window activated")
+            print(f"[Focus] NWN window activated (PID={pid} HWND={hwnd})")
             return True
         else:
-            print("[Focus] NWN window not found")
+            print(f"[Focus] NWN window not found (PID={pid})")
             return False
     except Exception as e:
         print(f"[Focus] Error: {e}")
         return False
 
 
-def is_nwn_foreground() -> bool:
-    """Checks if a Neverwinter Nights window is currently the foreground window."""
+def is_nwn_foreground(pid: int = None) -> bool:
+    """Check if NWN is in foreground.
+    
+    If pid is provided, checks if the foreground window belongs to that PID.
+    Otherwise, checks if foreground window is 'nwmain.exe'.
+    """
     try:
         fg = user32.GetForegroundWindow()
         if not fg:
             return False
-        # Check all known NWN window titles
-        for title in ("Neverwinter Nights: Enhanced Edition", "Neverwinter Nights", "nwmain"):
-            hwnd = user32.FindWindowW(None, title)
-            if hwnd and hwnd == fg:
+            
+        if pid:
+            p = ctypes.c_ulong(0)
+            user32.GetWindowThreadProcessId(fg, ctypes.byref(p))
+            if p.value == pid:
                 return True
-        return False
+            # If PID didn't match, we return False immediately for strict check? 
+            # Or should we fallback? 
+            # The user explicitly asked for PID check validation.
+            # But maybe the user launched via manager, restarted, and PID changed?
+            # Safe approach: if PID is provided, we MUST match it.
+            return False
+
+        # Fallback: check process name
+        proc_name = _get_process_name(fg)
+        return proc_name == "nwmain.exe"
     except Exception:
         return False
 

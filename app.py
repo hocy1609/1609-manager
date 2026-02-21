@@ -44,7 +44,6 @@ from core.models import (
 from core.theme_manager import ThemeManager
 from core.log_monitor_manager import LogMonitorManager
 from core.keybind_manager import KeybindManager, MultiHotkeyManager, send_numpad_sequence_to_nwn
-from core.craft_manager import CraftManager
 from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
 from core.ui_state import UIStateManager
@@ -92,22 +91,6 @@ load_custom_fonts()  # Load Mona Sans fonts
 
 
 @dataclass
-class CraftState:
-    running: bool = False
-    vars: dict[str, tk.Variable] = field(default_factory=dict)
-    recorded_macro: list = field(default_factory=list)
-    log_path: tk.StringVar | None = None
-    log_position: int = 0
-    real_count: int = 0
-    macro_playback_stop: bool = False
-    potions_count: int = 0
-    thread: threading.Thread | None = None
-    session_progress: dict = field(default_factory=dict)
-    session_progress: dict = field(default_factory=dict)
-    partial_line: str = ""
-
-
-@dataclass
 class LogMonitorState:
     config: dict = field(default_factory=dict)
     monitor: LogMonitor | None = None
@@ -125,6 +108,73 @@ class LogMonitorState:
 
 
 class NWNManagerApp:
+    # Type hints for linter to resolve dynamic attributes
+    root: tk.Tk
+    ui_state_manager: UIStateManager
+    app_dir: str
+    data_dir: str
+    backups_dir: str
+    settings_path: str
+    sessions_path: str
+    log_path: str
+    temp_dir: str | None
+    sessions: SessionManager
+    _settings_sessions: dict
+    log_monitor_manager: LogMonitorManager
+    log_monitor_state: LogMonitorState
+    keybind_manager: KeybindManager
+    multi_hotkey_manager: MultiHotkeyManager
+    profile_manager: ProfileManager
+    settings_manager: SettingsManager
+    server_manager: ServerManager
+    tray_manager: TrayManager
+    theme_manager: ThemeManager
+    
+    # State attributes initialized in ui_state.py or load_data
+    doc_path_var: tk.StringVar
+    exe_path_var: tk.StringVar
+    server_var: tk.StringVar
+    use_server_var: tk.BooleanVar
+    exit_x: int
+    exit_y: int
+    confirm_x: int
+    confirm_y: int
+    exit_speed: float
+    esc_count: int
+    clip_margin: int
+    show_tooltips: bool
+    profiles: list[Profile]
+    servers: list[dict]
+    server_group: str
+    server_groups: dict[str, list[dict]]
+    theme: str
+    category_order: list[str]
+    current_profile: Profile | None
+    hotkeys_config: dict
+    saved_keys: list[dict]
+    minimize_to_tray: bool
+    run_on_startup: bool
+    show_key: bool
+    _last_backup_time: float
+    _last_session_count: int
+    _last_running_state: bool
+    _save_after_id: str | None
+
+    # Dynamic attributes from screen builders (monkey-patched at runtime)
+    settings_exit_x: tk.StringVar
+    settings_exit_y: tk.StringVar
+    settings_confirm_x: tk.StringVar
+    settings_confirm_y: tk.StringVar
+    settings_exit_speed: tk.StringVar
+    settings_esc_count: tk.StringVar
+    settings_clip_margin: tk.StringVar
+    settings_show_tooltips: tk.BooleanVar
+    settings_theme: tk.StringVar
+    minimize_to_tray_var: tk.BooleanVar
+    run_on_startup_var: tk.BooleanVar
+    content_frame: tk.Frame
+    screens: dict[str, tk.Frame]
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.ui_state_manager = UIStateManager(self)
@@ -184,10 +234,12 @@ class NWNManagerApp:
         except Exception:
             logging.exception("Unhandled exception")
 
-        # Temporary working directory: keep it in system temp and remove on exit.
+            # Temporary working directory: keep it in system temp and remove on exit.
         try:
             self.temp_dir = os.path.join(tempfile.gettempdir(), "nwn_manager_temp")
-            os.makedirs(self.temp_dir, exist_ok=True)
+            path = self.temp_dir
+            if path:
+                os.makedirs(path, exist_ok=True)
         except Exception:
             self.temp_dir = None
 
@@ -195,8 +247,9 @@ class NWNManagerApp:
             import shutil
 
             try:
-                if self.temp_dir and os.path.exists(self.temp_dir):
-                    shutil.rmtree(self.temp_dir, ignore_errors=True)
+                path = self.temp_dir
+                if path and os.path.exists(path):
+                    shutil.rmtree(path, ignore_errors=True)
             except Exception:
                 logging.exception("Unhandled exception")
 
@@ -215,9 +268,6 @@ class NWNManagerApp:
 
         self.keybind_manager = KeybindManager(self)
         self.multi_hotkey_manager = MultiHotkeyManager(self)
-
-        self.craft_manager = CraftManager(self)
-        self.craft_manager.initialize_state()
 
         self.profile_manager = ProfileManager(self)
         self.settings_manager = SettingsManager(self)
@@ -492,11 +542,6 @@ class NWNManagerApp:
         self.clip_margin = settings.clip_margin
         self.show_tooltips = settings.show_tooltips
         self.theme = settings.theme
-        self._loaded_favorite_potions = settings.favorite_potions
-        
-        self.minimize_to_tray = settings.minimize_to_tray
-        self.run_on_startup = settings.run_on_startup
-        self.craft_timing = dict(settings.craft_timing)
         self.category_order = list(settings.category_order)  # User-defined category order
 
         try:
@@ -596,14 +641,7 @@ class NWNManagerApp:
                 clip_margin=getattr(self, "clip_margin", 48),
                 show_tooltips=getattr(self, "show_tooltips", True),
                 theme=getattr(self, "theme", "dark"),
-                favorite_potions=list(getattr(self, "favorite_potions", set())),
-                server_group=getattr(self, "server_group", "siala"),
-                server_groups=getattr(self, "server_groups", {}),
-                saved_keys=getattr(self, "saved_keys", []),
-                minimize_to_tray=getattr(self, "minimize_to_tray", True),
-                run_on_startup=getattr(self, "run_on_startup", False),
                 category_order=getattr(self, "category_order", []),
-                craft_timing=self._get_live_craft_timing(),
             )
             
             # Sync startup registry (failsafe)
@@ -641,7 +679,10 @@ class NWNManagerApp:
                     self.root.after_cancel(self._save_after_id)
                 except Exception:
                     logging.exception("Unhandled exception")
-            self._save_after_id = self.root.after(delay_ms, lambda: (setattr(self, '_save_after_id', None), self.save_data()))
+            def _do_save_callback(*args):
+                self._save_after_id = None
+                self.save_data()
+            self._save_after_id = self.root.after(delay_ms, _do_save_callback)
         except Exception as e:
             self.log_error("schedule_save", e)
 
@@ -679,7 +720,6 @@ class NWNManagerApp:
                 "exit_speed": getattr(self, "exit_speed", 0.1),
                 "esc_count": getattr(self, "esc_count", 1),
                 "clip_margin": getattr(self, "clip_margin", 48),
-                "favorite_potions": list(getattr(self, "favorite_potions", set())),
                 "server_group": getattr(self, "server_group", "siala"),
                 "saved_keys": getattr(self, "saved_keys", []),
                 "minimize_to_tray": getattr(self, "minimize_to_tray", True),
@@ -756,7 +796,7 @@ class NWNManagerApp:
                                 if (name, key) not in existing_ids:
                                     self.profiles.append(ip)
                                     existing_ids.add((name, key))
-                                    added += 1
+                                    added = added + 1
                         else:
                             self.profiles = imported
                     
@@ -798,8 +838,6 @@ class NWNManagerApp:
                         self.esc_count = app_settings.get("esc_count", self.esc_count)
                         self.clip_margin = app_settings.get("clip_margin", self.clip_margin)
                         
-                        self._loaded_favorite_potions = set(app_settings.get("favorite_potions", []))
-                        self.favorite_potions = self._loaded_favorite_potions
                         self.server_group = app_settings.get("server_group", self.server_group)
                         
                         self.minimize_to_tray = app_settings.get("minimize_to_tray", getattr(self, "minimize_to_tray", True))
@@ -1304,138 +1342,6 @@ class NWNManagerApp:
         """Scale paddings smoothly based on window width and mode."""
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.update_spacing(mode)
-
-    def create_craft_screen(self):
-        """Craft screen with integrated craft UI - delegated."""
-        if hasattr(self, "ui_state_manager"):
-            return self.ui_state_manager.create_craft_screen()
-        return None
-    
-    def _craft_row(self, parent, row, label, var):
-        """Create a settings row in grid. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._craft_row(parent, row, label, var)
-    
-    def _populate_potion_list(self):
-        """Populate the potion list. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._populate_potion_list()
-    
-    def _toggle_favorite(self, potion_name):
-        """Toggle favorite status. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._toggle_favorite(potion_name)
-    
-    def _select_potion(self, potion_name):
-        """Select a potion. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._select_potion(potion_name)
-    
-    def _on_potion_selected(self, event=None):
-        """Handle potion selection. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._on_potion_selected(event)
-    
-    def craft_start(self):
-        """Start crafting. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_start()
-    
-    def craft_stop(self):
-        """Stop crafting. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_stop()
-    
-    def _craft_loop(self):
-        """Main craft loop. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._craft_loop()
-    
-    def _craft_sleep(self, seconds):
-        """Sleep with interrupt. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            return self.craft_manager._craft_sleep(seconds)
-        return False
-    
-    def _craft_reset_ui(self):
-        """Reset craft UI. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._craft_reset_ui()
-    
-    def _check_craft_log(self, log_path):
-        """Check craft log. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            return self.craft_manager._check_craft_log(log_path)
-        return 0
-    
-    def _browse_craft_log(self):
-        """Browse for log file. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._browse_craft_log()
-    
-    def _get_live_craft_timing(self):
-        """Read live craft timing values from UI vars, falling back to stored dict."""
-        defaults = getattr(self, "craft_timing", {
-            "delay_open": 4.0, "delay_key": 0.15,
-            "delay_craft": 0.2, "open_sequence": "F11",
-        })
-        cs = getattr(self, "craft_state", None)
-        if cs and hasattr(cs, "vars"):
-            try:
-                return {
-                    "delay_open": cs.vars["delay_open"].get(),
-                    "delay_key": cs.vars["delay_key"].get(),
-                    "delay_craft": cs.vars["delay_craft"].get(),
-                    "open_sequence": cs.vars["open_sequence"].get(),
-                }
-            except Exception:
-                pass
-        return defaults
-
-    def _open_craft_settings(self):
-        """Open craft settings. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._open_craft_settings()
-
-    def craft_start_recording(self):
-        """Start macro recording. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_start_recording()
-    
-    def craft_clear_macro(self):
-        """Clear recorded macro. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_clear_macro()
-    
-    def craft_save_macro(self):
-        """Save macro. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_save_macro()
-    
-    def craft_load_selected_macro(self, event=None):
-        """Load selected macro. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_load_selected_macro(event)
-    
-    def craft_delete_macro(self):
-        """Delete selected macro. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_delete_macro()
-    
-    def _refresh_macro_list(self):
-        """Refresh macro list. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._refresh_macro_list()
-    
-    def craft_drag_potions(self):
-        """Play drag macro. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager.craft_drag_potions()
-    
-    def _play_macro_interruptible(self, events, speed_multiplier, target_hwnd):
-        """Play macro with interrupt. Delegates to CraftManager."""
-        if hasattr(self, 'craft_manager'):
-            self.craft_manager._play_macro_interruptible(events, speed_multiplier, target_hwnd)
 
     def create_settings_screen(self):
         """Settings screen - delegated."""

@@ -89,8 +89,7 @@ class ProfileManager:
         # Profiles: Standard
         tree.tag_configure(
             "profile", 
-            font=("Segoe UI", 10),
-            foreground=COLORS["fg_text"]
+            font=("Segoe UI", 10)
         )
         
         # Get user-defined category order or build from existing categories

@@ -12,7 +12,6 @@ from ui.ui_base import COLORS
 from ui.components import TitleBar, StatusBar, NavigationBar
 from ui.screens import (
     build_home_screen,
-    build_craft_screen,
     build_settings_screen,
     build_log_monitor_screen,
     build_hotkeys_screen,
@@ -46,11 +45,11 @@ class UIStateManager:
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         
         # Percentage-based sizing relative to screen resolution
-        width = int(sw * 0.55)
+        width = int(sw * 0.66)
         height = int(sh * 0.65)
         
         # Clamp to reasonable bounds
-        width = max(900, min(width, 1600))
+        width = max(1000, min(width, 1900))
         height = max(500, min(height, 1000))
         
         # Center window on screen
@@ -60,7 +59,7 @@ class UIStateManager:
         
         # Allow resizing with minimum constraints
         root.resizable(True, True)
-        root.minsize(900, 500)
+        root.minsize(1000, 500)
         
         root.configure(bg=COLORS["bg_root"])
         root.overrideredirect(True)
@@ -83,8 +82,9 @@ class UIStateManager:
 
         self.app.profiles = []
         self.app.servers = []
+        self.app.server_group = "siala"
+        self.app.server_groups = {}
         self.app.theme = "dark"
-        self.app.favorite_potions = set()
 
         self.app.current_profile = None
 
@@ -162,8 +162,16 @@ class UIStateManager:
         )
         style.map(
             "ProfileList.Treeview",
-            background=[("selected", COLORS["accent"])],
-            foreground=[("selected", COLORS["text_dark"])]
+            background=[
+                ("selected", "focus", COLORS["accent"]),
+                ("selected", "!focus", COLORS["accent"]),
+                ("!selected", COLORS["bg_panel"])
+            ],
+            foreground=[
+                ("selected", "focus", COLORS["text_dark"]),
+                ("selected", "!focus", COLORS["text_dark"]),
+                ("!selected", COLORS["fg_text"])
+            ]
         )
         style.configure(
             "ProfileList.Treeview.Heading",
@@ -228,10 +236,8 @@ class UIStateManager:
     def close_app_window(self):
         self.app.root.destroy()
 
-    # Screen builder mapping for lazy loading
     _SCREEN_BUILDERS = {
         "home": "create_home_screen",
-        "craft": "create_craft_screen",
         "hotkeys": "create_hotkeys_screen",
         "settings": "create_settings_screen",
         "log_monitor": "create_log_monitor_screen",
@@ -431,9 +437,6 @@ class UIStateManager:
         except Exception as e:
             self.app.log_error("update_spacing", e)
 
-    def create_craft_screen(self):
-        """Craft screen with integrated craft UI - delegated."""
-        return build_craft_screen(self.app)
 
     def create_settings_screen(self):
         """Settings screen - delegated."""
