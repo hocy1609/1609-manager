@@ -683,173 +683,173 @@ def bind_hover_effects(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=Non
 THEMES = {
     # === DARK THEMES ===
     
-    # Nord-inspired dark with soft pastel accents
+    # Deep Charcoal - Modern and sleek
     "dark": {
-        "bg_root": "#1E2128",
-        "bg_panel": "#282C34",
-        "bg_input": "#2E333D",
+        "bg_root": "#14161B",
+        "bg_panel": "#1C1F26",
+        "bg_input": "#252932",
         "fg_text": "#E4E8EE",
-        "fg_dim": "#9BA4B4",
-        "accent": "#7EC8E3",        # Soft cyan accent
-        "accent_hover": "#5AAFC7",
-        "success": "#95D5B2",       # Pastel mint green
-        "success_hover": "#74C69D",
-        "warning": "#FFD166",       # Warm pastel yellow
-        "warning_hover": "#F5C542",
-        "danger": "#F28B82",        # Soft coral red
-        "danger_hover": "#E66A5E",
-        "border": "#3A3F4B",
-        "header_bg": "#2E333D",
-        "header_fg": "#7EC8E3",
-        "text_dark": "#1E2128",
-        "running_indicator": "#95D5B2",
-        "offline": "#F28B82",
-        "title_btn_hover": "#3A3F4B",
-        "tooltip_bg": "#1E2128",
-        "bg_sidebar": "#282C34",
-        "bg_menu": "#2E333D",
+        "fg_dim": "#94A3B8",
+        "accent": "#00D2FF",        # Electric Cyan
+        "accent_hover": "#00B4DB",
+        "success": "#4ADE80",
+        "success_hover": "#22C55E",
+        "warning": "#FBBF24",
+        "warning_hover": "#F59E0B",
+        "danger": "#F87171",
+        "danger_hover": "#EF4444",
+        "border": "#2E333D",
+        "header_bg": "#1C1F26",
+        "header_fg": "#00D2FF",
+        "text_dark": "#0F172A",
+        "running_indicator": "#4ADE80",
+        "offline": "#F87171",
+        "title_btn_hover": "#2D333F",
+        "tooltip_bg": "#0F172A",
+        "bg_sidebar": "#1C1F26",
+        "bg_menu": "#1C1F26",
     },
     
-    # Purple/Violet night theme - soft and cozy
+    # Midnight Purple - Deep and mystical
     "purple": {
-        "bg_root": "#1A1625",
-        "bg_panel": "#241E30",
-        "bg_input": "#2D263B",
-        "fg_text": "#EDE7F6",
-        "fg_dim": "#B39DDB",
-        "accent": "#CE93D8",        # Soft lavender
-        "accent_hover": "#BA68C8",
-        "success": "#A5D6A7",       # Soft green
-        "success_hover": "#81C784",
-        "warning": "#FFCC80",       # Warm peach
-        "warning_hover": "#FFB74D",
-        "danger": "#F48FB1",        # Soft pink
-        "danger_hover": "#F06292",
-        "border": "#3D3450",
-        "header_bg": "#2D263B",
-        "header_fg": "#CE93D8",
-        "text_dark": "#1A1625",
-        "running_indicator": "#A5D6A7",
-        "offline": "#F48FB1",
-        "title_btn_hover": "#3D3450",
-        "tooltip_bg": "#1A1625",
-        "bg_sidebar": "#241E30",
-        "bg_menu": "#2D263B",
+        "bg_root": "#120E1A",
+        "bg_panel": "#1A1626",
+        "bg_input": "#231F30",
+        "fg_text": "#F5F3FF",
+        "fg_dim": "#A78BFA",
+        "accent": "#D8B4FE",        # Soft Lavender
+        "accent_hover": "#C084FC",
+        "success": "#A7F3D0",
+        "success_hover": "#6EE7B7",
+        "warning": "#FDE68A",
+        "warning_hover": "#FCD34D",
+        "danger": "#FDA4AF",
+        "danger_hover": "#FB7185",
+        "border": "#2D283B",
+        "header_bg": "#1A1626",
+        "header_fg": "#D8B4FE",
+        "text_dark": "#120E1A",
+        "running_indicator": "#A7F3D0",
+        "offline": "#FDA4AF",
+        "title_btn_hover": "#2D283B",
+        "tooltip_bg": "#120E1A",
+        "bg_sidebar": "#1A1626",
+        "bg_menu": "#1A1626",
     },
     
-    # Ocean blue dark theme
+    # Deep Ocean - Deep blue tones
     "blue": {
-        "bg_root": "#0D1B2A",
-        "bg_panel": "#1B2838",
-        "bg_input": "#233444",
-        "fg_text": "#E0FBFC",
-        "fg_dim": "#98C1D9",
-        "accent": "#48CAE4",        # Bright ocean blue
-        "accent_hover": "#00B4D8",
-        "success": "#80ED99",       # Vibrant mint
-        "success_hover": "#57CC99",
-        "warning": "#FFD60A",       # Bright yellow
-        "warning_hover": "#FFC300",
-        "danger": "#FF6B6B",        # Coral
-        "danger_hover": "#EE5A5A",
-        "border": "#2C4158",
-        "header_bg": "#1B2838",
-        "header_fg": "#48CAE4",
-        "text_dark": "#0D1B2A",
-        "running_indicator": "#80ED99",
-        "offline": "#FF6B6B",
-        "title_btn_hover": "#2C4158",
-        "tooltip_bg": "#0D1B2A",
-        "bg_sidebar": "#1B2838",
-        "bg_menu": "#233444",
+        "bg_root": "#0A111A",
+        "bg_panel": "#121A26",
+        "bg_input": "#1B2533",
+        "fg_text": "#F1F5F9",
+        "fg_dim": "#7DD3FC",
+        "accent": "#38BDF8",        # Sky Blue
+        "accent_hover": "#0EA5E9",
+        "success": "#4ADE80",
+        "success_hover": "#22C55E",
+        "warning": "#FBBF24",
+        "warning_hover": "#F59E0B",
+        "danger": "#F87171",
+        "danger_hover": "#EF4444",
+        "border": "#253140",
+        "header_bg": "#121A26",
+        "header_fg": "#38BDF8",
+        "text_dark": "#0A111A",
+        "running_indicator": "#4ADE80",
+        "offline": "#F87171",
+        "title_btn_hover": "#253140",
+        "tooltip_bg": "#0A111A",
+        "bg_sidebar": "#121A26",
+        "bg_menu": "#121A26",
     },
     
-    # === LIGHT THEMES ===
+    # === LIGHT THEMES (Refreshed/Softer) ===
     
-    # Soft cream/beige light theme
+    # Quiet White/Sand - Soft and premium
     "light": {
-        "bg_root": "#FAF8F5",
-        "bg_panel": "#FFFFFF",
-        "bg_input": "#F5F1EB",
-        "fg_text": "#2D3142",
-        "fg_dim": "#6B7280",
-        "accent": "#6366F1",        # Indigo accent
+        "bg_root": "#F7F4EF",
+        "bg_panel": "#FEFDFB",
+        "bg_input": "#EFEAE2",
+        "fg_text": "#334155",
+        "fg_dim": "#64748B",
+        "accent": "#6366F1",        # Indigo
         "accent_hover": "#4F46E5",
-        "success": "#10B981",       # Emerald
+        "success": "#10B981",
         "success_hover": "#059669",
-        "warning": "#F59E0B",       # Amber
+        "warning": "#F59E0B",
         "warning_hover": "#D97706",
-        "danger": "#EF4444",        # Red
+        "danger": "#EF4444",
         "danger_hover": "#DC2626",
-        "border": "#E5E1DA",
-        "header_bg": "#F5F1EB",
+        "border": "#E5DFD3",
+        "header_bg": "#FEFDFB",
         "header_fg": "#6366F1",
-        "text_dark": "#1F2937",
+        "text_dark": "#1E293B",
         "running_indicator": "#10B981",
         "offline": "#EF4444",
-        "title_btn_hover": "#E5E1DA",
+        "title_btn_hover": "#E5DFD3",
         "tooltip_bg": "#FFFFFF",
-        "bg_sidebar": "#FFFFFF",
-        "bg_menu": "#F5F1EB",
+        "bg_sidebar": "#FEFDFB",
+        "bg_menu": "#FEFDFB",
     },
     
-    # Mint/Sage light theme - fresh and clean
+    # Fresh Mint/Sage - Softer greens
     "mint": {
-        "bg_root": "#F0FDF4",
-        "bg_panel": "#FFFFFF",
-        "bg_input": "#ECFDF5",
-        "fg_text": "#14532D",
-        "fg_dim": "#4D7C5A",
-        "accent": "#059669",        # Emerald accent
-        "accent_hover": "#047857",
-        "success": "#22C55E",       # Green
-        "success_hover": "#16A34A",
-        "warning": "#EAB308",       # Yellow
-        "warning_hover": "#CA8A04",
-        "danger": "#F43F5E",        # Rose
-        "danger_hover": "#E11D48",
-        "border": "#D1FAE5",
-        "header_bg": "#ECFDF5",
-        "header_fg": "#059669",
-        "text_dark": "#052E16",
-        "running_indicator": "#22C55E",
-        "offline": "#F43F5E",
-        "title_btn_hover": "#D1FAE5",
+        "bg_root": "#EFF5F1",
+        "bg_panel": "#F7FAF8",
+        "bg_input": "#E1EBE4",
+        "fg_text": "#164E63",
+        "fg_dim": "#475569",
+        "accent": "#2DD4BF",        # Seafoam/Teal
+        "accent_hover": "#14B8A6",
+        "success": "#34D399",
+        "success_hover": "#10B981",
+        "warning": "#FBBF24",
+        "warning_hover": "#F59E0B",
+        "danger": "#FB7185",
+        "danger_hover": "#F43F5E",
+        "border": "#D4E1D9",
+        "header_bg": "#F7FAF8",
+        "header_fg": "#0D9488",
+        "text_dark": "#064E3B",
+        "running_indicator": "#10B981",
+        "offline": "#FB7185",
+        "title_btn_hover": "#D4E1D9",
         "tooltip_bg": "#FFFFFF",
-        "bg_sidebar": "#FFFFFF",
-        "bg_menu": "#ECFDF5",
+        "bg_sidebar": "#F7FAF8",
+        "bg_menu": "#F7FAF8",
     },
     
-    # Rose/Pink light theme - warm and elegant
+    # Pearl Rose - Elegant blush tones
     "rose": {
-        "bg_root": "#FFF1F2",
-        "bg_panel": "#FFFFFF",
-        "bg_input": "#FFE4E6",
-        "fg_text": "#4C1D24",
-        "fg_dim": "#9F1239",
-        "accent": "#E11D48",        # Rose accent
-        "accent_hover": "#BE123C",
-        "success": "#34D399",       # Emerald
+        "bg_root": "#FAF5F5",
+        "bg_panel": "#FDFBFB",
+        "bg_input": "#F2EAEB",
+        "fg_text": "#881337",
+        "fg_dim": "#BE123C",
+        "accent": "#FB7185",        # Rose Pink
+        "accent_hover": "#F43F5E",
+        "success": "#34D399",
         "success_hover": "#10B981",
-        "warning": "#FBBF24",       # Amber
+        "warning": "#FBBF24",
         "warning_hover": "#F59E0B",
-        "danger": "#DC2626",        # Red
-        "danger_hover": "#B91C1C",
-        "border": "#FECDD3",
-        "header_bg": "#FFE4E6",
+        "danger": "#E11D48",
+        "danger_hover": "#BE123C",
+        "border": "#E9DEE0",
+        "header_bg": "#FDFBFB",
         "header_fg": "#E11D48",
-        "text_dark": "#2C0A0F",
+        "text_dark": "#4C0519",
         "running_indicator": "#34D399",
-        "offline": "#DC2626",
-        "title_btn_hover": "#FECDD3",
+        "offline": "#E11D48",
+        "title_btn_hover": "#E9DEE0",
         "tooltip_bg": "#FFFFFF",
-        "bg_sidebar": "#FFFFFF",
-        "bg_menu": "#FFE4E6",
+        "bg_sidebar": "#FDFBFB",
+        "bg_menu": "#FDFBFB",
     },
     
     # === SPECIAL THEMES ===
     
-    # High contrast black & white
+    # High contrast monochrome
     "bw": {
         "bg_root": "#0A0A0A",
         "bg_panel": "#171717",
@@ -858,7 +858,7 @@ THEMES = {
         "fg_dim": "#A3A3A3",
         "accent": "#FAFAFA",
         "accent_hover": "#D4D4D4",
-        "success": "#22C55E",       # Keep some color for clarity
+        "success": "#22C55E",
         "success_hover": "#16A34A",
         "warning": "#EAB308",
         "warning_hover": "#CA8A04",
