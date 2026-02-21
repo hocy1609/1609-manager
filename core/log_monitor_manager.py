@@ -370,19 +370,21 @@ class LogMonitorManager:
                 
                 # 3. Type Command
                 print(f"[AutoFog] Typing command: {command}")
+                FAST_HOLD = 0.01  # 10ms hold time
+                
                 for char in command:
                     if char == " ":
-                        press_key_by_name("SPACE")
+                        press_key_by_name("SPACE", hold_time=FAST_HOLD)
                     elif char == ".":
-                        press_key_by_name(".")
+                        press_key_by_name(".", hold_time=FAST_HOLD)
                     else:
-                        press_key_by_name(char)
-                    time.sleep(0.01) # Very fast typing
+                        press_key_by_name(char, hold_time=FAST_HOLD)
+                    # No extra inter-character delay - the hold_time is sufficient
                 
                 # 4. Press Enter (Execute)
-                time.sleep(0.05)
+                time.sleep(0.02)
                 print("[AutoFog] Pressing Enter to execute...")
-                press_key_by_name("ENTER")
+                press_key_by_name("ENTER", hold_time=FAST_HOLD)
                 
                 print(f"[AutoFog] Command sent successfully: {command}")
             finally:

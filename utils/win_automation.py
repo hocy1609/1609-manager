@@ -694,7 +694,7 @@ def right_click():
         print(f"[RightClick] Error: {e}")
 
 
-def press_key_with_modifiers(key_name: str, ctrl: bool = False, shift: bool = False, alt: bool = False):
+def press_key_with_modifiers(key_name: str, ctrl: bool = False, shift: bool = False, alt: bool = False, hold_time: float = 0.05):
     """Нажимает клавишу с модификаторами (Ctrl, Shift, Alt).
     
     Args:
@@ -702,6 +702,7 @@ def press_key_with_modifiers(key_name: str, ctrl: bool = False, shift: bool = Fa
         ctrl: Зажать Ctrl
         shift: Зажать Shift
         alt: Зажать Alt
+        hold_time: Время удерживания клавиши в секундах
     """
     key_upper = key_name.upper()
     vk = VK_MAP.get(key_upper)
@@ -731,7 +732,7 @@ def press_key_with_modifiers(key_name: str, ctrl: bool = False, shift: bool = Fa
         # Press key
         scan = user32.MapVirtualKeyW(vk, 0)
         user32.keybd_event(vk, scan, 0, 0)
-        time.sleep(0.05)
+        time.sleep(hold_time)
         user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)
         
         time.sleep(0.02)
@@ -757,7 +758,7 @@ def right_click_and_send_sequence(keys: list, delay: float = 0.05):
     right_click()
     press_key_sequence(keys, delay)
 
-def press_key_by_name(key_name: str):
+def press_key_by_name(key_name: str, hold_time: float = 0.03):
     """Нажимает клавишу по её строковому имени (например, 'F10', '4', 'R', 'SHIFT+F1')."""
     key_upper = key_name.upper().strip()
     
@@ -778,7 +779,7 @@ def press_key_by_name(key_name: str):
                 main_key = part
         
         if main_key:
-            press_key_with_modifiers(main_key, ctrl=modifiers["CTRL"], shift=modifiers["SHIFT"], alt=modifiers["ALT"])
+            press_key_with_modifiers(main_key, ctrl=modifiers["CTRL"], shift=modifiers["SHIFT"], alt=modifiers["ALT"], hold_time=hold_time)
             return
 
     vk = VK_MAP.get(key_upper)
@@ -797,7 +798,7 @@ def press_key_by_name(key_name: str):
         try:
             scan = user32.MapVirtualKeyW(vk, 0)
             user32.keybd_event(vk, scan, 0, 0)  # Down
-            time.sleep(0.03)  # 30ms hold — NWN needs time to register the keypress
+            time.sleep(hold_time)  # Hold time for game registration
             user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)  # Up
         except Exception:
             pass
