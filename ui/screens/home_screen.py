@@ -221,6 +221,7 @@ def build_home_screen(app):
     self.lb.bind("<<TreeviewSelect>>", self.on_select)
     self.lb.bind("<Button-1>", self.on_drag_start)
     self.lb.bind("<ButtonRelease-1>", self.on_drag_drop)
+    self.lb.bind("<Button-2>", self.on_middle_click)
     self.lb.bind("<Button-3>", self.on_right_click)
     self.lb.bind("<Motion>", self.on_profile_list_motion)
     self.lb.bind("<Leave>", self.on_profile_list_leave)

@@ -459,6 +459,28 @@ class ProfileManager:
         # Signal to hotkey manager if running? 
         # _execute_action will pick it up immediately.
 
+    def on_middle_click(self, event):
+        """Toggle selection of the clicked item on middle click (scroll wheel)."""
+        tree = self.app.lb
+        item_id = tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        # Don't allow selecting categories via middle click
+        if item_id not in self.item_map:
+            return
+
+        current_selection = list(tree.selection())
+        if item_id in current_selection:
+            current_selection.remove(item_id)
+        else:
+            current_selection.append(item_id)
+            
+        tree.selection_set(current_selection)
+        # We don't need to manually call on_select, because tree.selection_set 
+        # triggers <<TreeviewSelect>>, which handles the rest.
+        return "break"
+
     def on_select(self, event):
         """Handle selection in Treeview."""
         tree = self.app.lb

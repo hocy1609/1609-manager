@@ -1476,6 +1476,10 @@ class NWNManagerApp:
         """Handle right click on profile list."""
         self.profile_manager.show_profile_menu(event)
     
+    def on_middle_click(self, event):
+        """Handle middle click on profile list."""
+        if hasattr(self, 'profile_manager'):
+            return self.profile_manager.on_middle_click(event)
 
 
     def rename_category(self, old_name: str):
