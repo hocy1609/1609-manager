@@ -88,7 +88,7 @@ class MultiHotkeyManager:
         # State tracking
         self._are_keys_registered = False
         self._last_focus_check = False # True if NWN was focused
-        self._thread_id = None
+        self._thread_id: Optional[int] = None
         self._paused = False
 
     def pause(self):
@@ -231,7 +231,15 @@ class MultiHotkeyManager:
         Called within the message loop thread.
         Syncs registered hotkeys with current config and focus state.
         """
-        should_be_registered = (self._is_nwn_focused() or force) and not self._paused
+        # Smart pause if >1 session running and setting enabled
+        session_count = len(getattr(self.app.sessions, "sessions", {}) or {})
+        multi_session_pause = False
+        if session_count > 1:
+            settings = getattr(self.app, "settings", None)
+            if settings and getattr(settings, "disable_hotkeys_on_multi_session", False):
+                multi_session_pause = True
+
+        should_be_registered = (self._is_nwn_focused() or force) and not self._paused and not multi_session_pause
         
         # If state implies change
         if should_be_registered and not self._are_keys_registered:
@@ -315,17 +323,34 @@ class MultiHotkeyManager:
                 
                 sessions = getattr(self.app.sessions, 'sessions', None) or {}
                 # Check if currently focused PID is a known session
+                focused_profile = None
                 for k, pid_str in sessions.items():
                     try:
                         if int(pid_str) == current_pid:
                             is_nwn_focused = True
+                            # Find profile by cdKey (k)
+                            for prof in getattr(self.app, 'profiles', []):
+                                if prof.get("cdKey") == k:
+                                    focused_profile = prof
+                                    break
                             break
                     except (ValueError, TypeError):
                         continue
-            
-            # Only force focus if we are NOT already in a game window
+                
+                # Per-profile hotkey check: only trigger if profile has hotkey_on=True
+                if is_nwn_focused:
+                    if focused_profile and not focused_profile.get("hotkey_on", False):
+                        print(f"[MultiHotkeyManager] Hotkey IGNORED: profile '{focused_profile.name}' has hotkeys OFF")
+                        return
+                    elif not focused_profile:
+                        # Session found but no profile match (shouldn't happen)? 
+                        print("[MultiHotkeyManager] Hotkey IGNORED: No profile match for session")
+                        return
+
+            # Ensure hotkeys only fire when their profile is actually focused
             if not is_nwn_focused:
-                self._focus_game_window()
+                print("[MultiHotkeyManager] Hotkey IGNORED: Active window is not an NWN session")
+                return
             
             if action.right_click:
                 right_click_and_send_sequence(action.sequence)
@@ -363,19 +388,22 @@ class MultiHotkeyManager:
         except Exception:
             return False
 
-    def _focus_game_window(self):
-        """Focus the NWN game window if running."""
+    def _get_hotkey_target_hwnd(self):
+        """Find the HWND of the session that has hotkey_on=True."""
         try:
             sessions = getattr(self.app.sessions, 'sessions', None) or {}
-            for k, v in sessions.items():
-                pid = int(v)
-                hwnd = get_hwnd_from_pid(pid)
-                if hwnd:
-                    user32.SetForegroundWindow(hwnd)
-                    time.sleep(0.05)
-                break
+            for prof in getattr(self.app, 'profiles', []):
+                if prof.get("hotkey_on", False):
+                    pid_str = sessions.get(prof.get("cdKey"))
+                    if pid_str:
+                        return get_hwnd_from_pid(int(pid_str))
         except Exception:
             pass
+        return None
+
+    def _focus_game_window(self):
+        """DEPRECATED: Use _get_hotkey_target_hwnd in _execute_action instead."""
+        pass
     
     def is_active(self) -> bool:
         """Check if hotkeys are actively registered."""

@@ -84,7 +84,42 @@ def build_hotkeys_screen(app):
         bg=COLORS["bg_root"],
         fg=COLORS["fg_dim"],
         font=("Segoe UI", 10)
-    ).pack(anchor="w", padx=40, pady=(0, 10))
+    ).pack(anchor="w", padx=40, pady=(0, 5))
+
+    # Multi-session setting
+    multi_session_frame = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
+    multi_session_frame.pack(anchor="w", padx=40, pady=(0, 10))
+    
+    self.disable_multi_session_var = tk.BooleanVar(
+        value=getattr(self.settings, "disable_hotkeys_on_multi_session", False)
+    )
+    
+    def _on_multi_toggle(*args):
+        try:
+            val = self.disable_multi_session_var.get()
+            self.settings.disable_hotkeys_on_multi_session = val
+            self.save_data()
+            # Update hotkey manager instantly
+            if hasattr(self, "multi_hotkey_manager") and self.multi_hotkey_manager._thread_id:
+                from utils.win_automation import user32
+                user32.PostThreadMessageW(self.multi_hotkey_manager._thread_id, 0x0401, 0, 0) # WM_USER_UPDATE
+        except Exception:
+            pass
+
+    self.disable_multi_session_var.trace_add("write", _on_multi_toggle)
+    
+    ms_chk = tk.Checkbutton(
+        multi_session_frame,
+        text="Disable hotkeys when multiple game instances are running (Smart Pause)",
+        variable=self.disable_multi_session_var,
+        bg=COLORS["bg_root"],
+        fg=COLORS["fg_text"],
+        activebackground=COLORS["bg_root"],
+        activeforeground=COLORS["fg_text"],
+        selectcolor=COLORS["bg_input"],
+        font=("Segoe UI", 10)
+    )
+    ms_chk.pack(side="left")
 
     Separator(hotkeys_frame, orient="horizontal", color=COLORS["accent"], thickness=2, padding=0).pack(fill="x", padx=40, pady=(0, 15))
 

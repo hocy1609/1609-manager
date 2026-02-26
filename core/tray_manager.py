@@ -36,13 +36,11 @@ def create_default_icon(size: int = 64) -> "Image.Image":
     
     # Try loading custom logo
     try:
-        # Check for logo.png or logo.ico
-        for name in ["logo.png", "logo.ico"]:
-            icon_path = get_resource_path(name)
-            if os.path.exists(icon_path):
-                img = Image.open(icon_path)
-                # Resize if needed, though pystray usually handles it
-                return img
+        # Check for logo.ico in Assets
+        icon_path = get_resource_path(os.path.join("Assets", "logo.ico"))
+        if os.path.exists(icon_path):
+            img = Image.open(icon_path)
+            return img
     except Exception as e:
         print(f"Failed to load custom icon: {e}")
     

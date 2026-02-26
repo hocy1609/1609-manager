@@ -7,7 +7,13 @@
     "**/.venv"
   ],
   "extraPaths": ["."],
-  "pythonVersion": "3.14",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonVersion": "3.14",
+      "pythonPlatform": "Windows"
+    }
+  ],
   "typeCheckingMode": "basic",
   "reportMissingImports": "warning",
   "reportMissingModuleSource": "none",

@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import weakref
+from typing import Dict, Any, Optional, Set, List
 
 # Core color map; themes will replace these values
 COLORS = {
@@ -69,10 +70,13 @@ class ModernButton(tk.Button):
         self.bg_color = bg_color
         self.hover_color = hover_color
         # Store semantic color key so future theme switches can remap reliably
-        self._color_key = None
-        self._hover_key = None
+        self._color_key: Optional[str] = None
+        self._hover_key: Optional[str] = None
+        self._fg_key: Optional[str] = None
+        self._trace_id: Optional[str] = None
+        self._tooltip_text: Optional[str] = None
+        self._tooltip: Optional[Any] = None
         self._user_fg = user_fg  # Remember if user explicitly set fg
-        self._fg_key = None
         try:
             for k, v in COLORS.items():
                 if isinstance(v, str):
@@ -581,23 +585,25 @@ class Separator(tk.Frame):
         else:
             self.configure(width=thickness)
     
-    def pack(self, **kwargs):
+    def pack(self, cnf: dict[str, Any] | None = None, **kwargs):
+        if cnf is None: cnf = {}
         if self._orient == "horizontal":
             kwargs.setdefault("fill", "x")
             kwargs.setdefault("pady", self._padding)
         else:
             kwargs.setdefault("fill", "y")
             kwargs.setdefault("padx", self._padding)
-        super().pack(**kwargs)
+        super().pack(cnf, **kwargs)
     
-    def grid(self, **kwargs):
+    def grid(self, cnf: dict[str, Any] | None = None, **kwargs):
+        if cnf is None: cnf = {}
         if self._orient == "horizontal":
             kwargs.setdefault("sticky", "ew")
             kwargs.setdefault("pady", self._padding)
         else:
             kwargs.setdefault("sticky", "ns")
             kwargs.setdefault("padx", self._padding)
-        super().grid(**kwargs)
+        super().grid(cnf, **kwargs)
 
 
 class SectionHeader(tk.Frame):
@@ -1075,5 +1081,10 @@ def _semantic_repaint_widget_tree(widget: tk.Widget, old: dict, new: dict):
         pass
 
     # Recurse into children
-    for child in getattr(widget, "winfo_children", lambda: [])():
+    try:
+        children = widget.winfo_children()
+    except Exception:
+        children = []
+
+    for child in children:
         _semantic_repaint_widget_tree(child, old, new)

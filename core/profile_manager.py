@@ -51,7 +51,7 @@ class ProfileManager:
         self.collapsed_categories = set()
         
         # State for inline actions
-        self._hover_idx = -1
+        self._hover_item_id = None
         self._inline_frame = None
         self._inline_hide_job = None
         
@@ -90,6 +90,11 @@ class ProfileManager:
         tree.tag_configure(
             "profile", 
             font=("Segoe UI", 10)
+        )
+        # Hover state: Subtle background
+        tree.tag_configure(
+            "hover",
+            background=COLORS.get("bg_input", "#2E333D")
         )
         
         # Get user-defined category order or build from existing categories
@@ -157,7 +162,9 @@ class ProfileManager:
                 
                 char = _get_attr(p, "characterName", "")
                 
-                display_text = name
+                # Hotkey indicator
+                indicator = "⌨️ " if _get_attr(p, "hotkey_on", False) else ""
+                display_text = f"{indicator}{name}"
                 if char:
                     display_text += f" ({char})"
                 
@@ -359,6 +366,13 @@ class ProfileManager:
             cat_name = tree.item(item_id, "text")
             menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
             
+            # Smart Launch Category
+            menu.add_command(
+                label=f"Smart Launch All: {cat_name}",
+                command=lambda: self.launch_category(cat_name)
+            )
+            menu.add_separator()
+            
             menu.add_command(label="Rename Category", command=lambda: self.rename_category(cat_name))
             
             # Move Category Option
@@ -375,7 +389,19 @@ class ProfileManager:
                 return
             prof = self.item_map[item_id]
             
+            # Check if multiple profiles are selected
+            selection = tree.selection()
+            if len(selection) > 1:
+                menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
+                menu.add_command(
+                    label=f"Smart Launch Selected ({len(selection)})",
+                    command=self.launch_selected
+                )
+                menu.post(event.x_root, event.y_root)
+                return
+
             menu = tk.Menu(self.app.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
+            
             menu.add_command(label="Edit", command=lambda: self.edit_profile()) # Use edit_profile without args as it uses current_profile
             
             # Move to other group
@@ -388,12 +414,50 @@ class ProfileManager:
             menu.add_command(label="Delete", command=lambda: self.delete_profile()) # Use delete_profile without args
             menu.add_separator()
             
-            # Launch options
-            menu.add_command(label="Launch", command=self.app.launch_game)
-            
-
+            # Hotkey ON/OFF (Exclusive)
+            hk_label = "Hotkey: OFF ⌨️" if _get_attr(prof, "hotkey_on", False) else "Hotkey: ON ⌨️"
+            menu.add_command(
+                label=hk_label,
+                command=lambda: self.toggle_hotkey_on(prof)
+            )
             
             menu.post(event.x_root, event.y_root)
+
+    def launch_category(self, category_name: str):
+        """Launch all profiles in a category using smart launch."""
+        profiles = [p for p in self.app.profiles if _get_attr(p, "category") == category_name]
+        if profiles:
+            self.app.smart_launch_profiles(profiles)
+
+    def launch_selected(self):
+        """Launch all selected profiles using smart launch."""
+        tree = self.app.lb
+        selection = tree.selection()
+        profiles = []
+        for item_id in selection:
+            if item_id in self.item_map:
+                profiles.append(self.item_map[item_id])
+        
+        if profiles:
+            self.app.smart_launch_profiles(profiles)
+
+    def toggle_hotkey_on(self, prof):
+        """Toggle hotkey_on for a profile (exclusive behavior)."""
+        new_val = not _get_attr(prof, "hotkey_on", False)
+        
+        # Turn off for all first
+        for p in self.app.profiles:
+            _set_attr(p, "hotkey_on", False)
+            
+        # Set new value
+        _set_attr(prof, "hotkey_on", new_val)
+        
+        # Persistence and UI update
+        self.app.save_data()
+        self.refresh_list()
+        
+        # Signal to hotkey manager if running? 
+        # _execute_action will pick it up immediately.
 
     def on_select(self, event):
         """Handle selection in Treeview."""
@@ -403,6 +467,26 @@ class ProfileManager:
             return
             
         item_id = selection[0]
+        
+        # If the selected item is the one we are hovering over, refresh inline actions
+        # to update background color (accent vs panel bg)
+        if hasattr(self, '_hover_item_id') and self._hover_item_id == item_id:
+             bbox = tree.bbox(item_id)
+             if bbox:
+                 self._show_inline_actions(item_id, bbox)
+
+        # Update multiselection UI
+        if len(selection) > 1:
+            if hasattr(self.app, 'lbl_selected_count'):
+                self.app.lbl_selected_count.config(text=f"Выбрано профилей: {len(selection)}")
+            if hasattr(self.app, 'btn_play'):
+                self.app.btn_play.config(command=self.launch_selected)
+        else:
+            if hasattr(self.app, 'lbl_selected_count'):
+                self.app.lbl_selected_count.config(text="")
+            if hasattr(self.app, 'btn_play'):
+                self.app.btn_play.config(command=lambda: self.app.launch_game(self.item_map.get(item_id)))
+
         # Check if it's a profile
         if item_id in self.item_map:
             profile = self.item_map[item_id]
@@ -524,8 +608,39 @@ class ProfileManager:
 
     def on_profile_list_motion(self, event):
         """Show inline edit/delete buttons when hovering over a profile row."""
-        # Disabled for Treeview migration (requires new implementation)
-        return
+        tree = self.app.lb
+        item_id = tree.identify_row(event.y)
+        
+        if not item_id:
+            self._schedule_inline_hide()
+            return
+
+        tags = tree.item(item_id, "tags")
+        # We now want to show inline actions for both profile and category tags
+        if "profile" not in tags and "category" not in tags:
+            self._schedule_inline_hide()
+            return
+            
+        # Add hover tag to current row, remove from others
+        for item in tree.tag_has("hover"):
+            if item != item_id:
+                current_tags = list(tree.item(item, "tags"))
+                if "hover" in current_tags:
+                    current_tags.remove("hover")
+                    tree.item(item, tags=current_tags)
+        if "hover" not in tags:
+            current_tags = list(tags)
+            current_tags.append("hover")
+            tree.item(item_id, tags=current_tags)
+            
+        # Get bbox for the item
+        bbox = tree.bbox(item_id)
+        if not bbox:
+            self._schedule_inline_hide()
+            return
+            
+        self._hover_item_id = item_id # Store item_id for Treeview
+        self._show_inline_actions(item_id, bbox)
 
     def on_profile_list_leave(self, _event):
         """Mouse left the listbox."""
@@ -535,12 +650,27 @@ class ProfileManager:
         """List scrolled."""
         self.hide_inline_actions()
 
-    def _show_inline_actions(self, idx: int, bbox: tuple[int, int, int, int] | None = None):
+    def _show_inline_actions(self, idx: str, bbox: tuple[int, int, int, int] | None = None):
         """Create and place the floating frame with Edit/Delete buttons over the list item."""
         self._cancel_inline_hide()
         
+        # Determine if this row is selected to match background
+        is_selected = self.app.lb.selection() and idx in self.app.lb.selection()
+        
+        # Optimization: if frame already exists for same idx and selection state, just ensure it's placed correctly
+        if hasattr(self, '_last_inline_id') and self._last_inline_id == idx:
+            if hasattr(self, '_last_inline_selected') and self._last_inline_selected == is_selected:
+                if self._inline_frame and self._inline_frame.winfo_exists():
+                    return
+        
+        self._last_inline_id = idx
+        self._last_inline_selected = is_selected
+
         if self._inline_frame:
-            self._inline_frame.destroy()
+            try:
+                self._inline_frame.destroy()
+            except Exception:
+                pass
         
         if not bbox:
             bbox = self.app.lb.bbox(idx)
@@ -549,38 +679,102 @@ class ProfileManager:
 
         x, y, w, h = bbox
         
-        # Create a frame on top of the listbox with proper background
-        bg_color = COLORS["bg_input"]
+        # Determine if this row is selected to match background
+        is_selected = self.app.lb.selection() and idx in self.app.lb.selection()
+        # Always use panel bg so icons retain their standard look
+        bg_color = COLORS["bg_panel"]
+        fg_color = COLORS["fg_text"]
+        
+        is_category = "category" in self.app.lb.item(idx, "tags")
+
         self._inline_frame = tk.Frame(self.app.lb, bg=bg_color, height=h, relief="flat", bd=0)
         
         # Inner container for proper padding
         inner = tk.Frame(self._inline_frame, bg=bg_color)
         inner.pack(fill="both", expand=True, padx=4, pady=2)
         
-        # Edit btn
-        btn_edit = tk.Label(
-            inner, text="✎", bg=bg_color, 
-            fg=COLORS["accent"], font=("Segoe UI", 11), cursor="hand2",
-            padx=4, pady=0
-        )
-        btn_edit.pack(side="left", padx=(0, 2))
-        btn_edit.bind("<Button-1>", lambda e: self._inline_edit_profile())
-        bind_hover_effects(btn_edit, bg_color, COLORS["bg_panel"], COLORS["accent"], COLORS["success"])
+        if is_category:
+            # Inline actions for categories
+            # Play All btn (▶)
+            btn_play = tk.Label(
+                inner, text="▶", bg=bg_color, 
+                fg=COLORS["success"], 
+                font=("Segoe UI", 11), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_play.pack(side="left", padx=(0, 2))
+            btn_play.bind("<Button-1>", lambda e: self._inline_play_category(idx))
+            bind_hover_effects(btn_play, bg_color, bg_color, btn_play.cget("fg"), COLORS["success_hover"])
+
+            # Move Up btn (⬆)
+            btn_up = tk.Label(
+                inner, text="\uE74A", bg=bg_color, 
+                fg=COLORS["accent"], 
+                font=("Segoe Fluent Icons", 10), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_up.pack(side="left", padx=(0, 2))
+            btn_up.bind("<Button-1>", lambda e: self._inline_move_category(idx, -1))
+            bind_hover_effects(btn_up, bg_color, bg_color, btn_up.cget("fg"), COLORS["accent_hover"])
+
+            # Move Down btn (⬇)
+            btn_down = tk.Label(
+                inner, text="\uE74B", bg=bg_color, 
+                fg=COLORS["accent"], 
+                font=("Segoe Fluent Icons", 10), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_down.pack(side="left", padx=(0, 2))
+            btn_down.bind("<Button-1>", lambda e: self._inline_move_category(idx, 1))
+            bind_hover_effects(btn_down, bg_color, bg_color, btn_down.cget("fg"), COLORS["accent_hover"])
+            
+            btn_width = 85
+        else:
+            # Inline actions for profiles
+            # Play btn (▶)
+            btn_play = tk.Label(
+                inner, text="▶", bg=bg_color, 
+                fg=COLORS["success"], 
+                font=("Segoe UI", 11), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_play.pack(side="left", padx=(0, 2))
+            btn_play.bind("<Button-1>", lambda e: self.app.launch_game(self.item_map.get(idx)))
+            
+            # Hover colors
+            play_hover = COLORS["success_hover"]
+            bind_hover_effects(btn_play, bg_color, bg_color, btn_play.cget("fg"), play_hover)
+
+            # Restart btn (🔄)
+            btn_restart = tk.Label(
+                inner, text="\uE72C", bg=bg_color, 
+                fg=COLORS["accent"], 
+                font=("Segoe Fluent Icons", 10), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_restart.pack(side="left", padx=(0, 2))
+            btn_restart.bind("<Button-1>", lambda e: self._inline_restart_profile())
+            restart_hover = COLORS["accent_hover"]
+            bind_hover_effects(btn_restart, bg_color, bg_color, btn_restart.cget("fg"), restart_hover)
+            
+            # Close btn (✖)
+            btn_close = tk.Label(
+                inner, text="\uE8BB", bg=bg_color, 
+                fg=COLORS["danger"], 
+                font=("Segoe Fluent Icons", 10), cursor="hand2",
+                padx=4, pady=0
+            )
+            btn_close.pack(side="left", padx=(0, 2))
+            btn_close.bind("<Button-1>", lambda e: self._inline_close_profile())
+            close_hover = COLORS["danger_hover"]
+            bind_hover_effects(btn_close, bg_color, bg_color, btn_close.cget("fg"), close_hover)
+            
+            # Calculate position - place at absolute right edge
+            btn_width = 85
         
-        # Delete btn
-        btn_del = tk.Label(
-            inner, text="✖", bg=bg_color, 
-            fg=COLORS["danger"], font=("Segoe UI", 11), cursor="hand2",
-            padx=4, pady=0
-        )
-        btn_del.pack(side="left", padx=(0, 2))
-        btn_del.bind("<Button-1>", lambda e: self._inline_delete_profile())
-        bind_hover_effects(btn_del, bg_color, COLORS["bg_panel"], COLORS["danger"], COLORS["danger_hover"])
-        
-        # Calculate position - place at right edge
-        btn_width = 60
         lb_w = self.app.lb.winfo_width()
-        place_x = lb_w - btn_width - 4
+        # Ensure it sits flush with the right edge
+        place_x = lb_w - btn_width
         
         if place_x < 0: 
             place_x = 0
@@ -591,12 +785,81 @@ class ProfileManager:
         self._inline_frame.bind("<Enter>", lambda e: self._cancel_inline_hide())
         self._inline_frame.bind("<Leave>", lambda e: self._schedule_inline_hide())
 
+    def _inline_play_category(self, cat_id: str):
+        """Action when Play is clicked on a category."""
+        try:
+            tree = self.app.lb
+            category_name = tree.item(cat_id, "text")
+            
+            # Find all profiles in this category
+            profiles_to_launch = []
+            for child_id in tree.get_children(cat_id):
+                profile = self.item_map.get(child_id)
+                if profile:
+                    profiles_to_launch.append(profile)
+            
+            if profiles_to_launch:
+                self.app.smart_launch_profiles(profiles_to_launch)
+        except Exception as e:
+            logging.error(f"Error launching category: {e}")
+            
+    def _inline_move_category(self, cat_id: str, direction: int):
+        """Action when Move Up (-1) or Move Down (+1) is clicked on a category."""
+        try:
+            tree = self.app.lb
+            category_name = tree.item(cat_id, "text")
+            
+            # Ensure category_order exists and has this category
+            if not hasattr(self.app, "category_order"):
+                self.app.category_order = []
+                
+            # If not in the list yet, populate it from current Treeview order to match what user sees
+            if category_name not in self.app.category_order:
+                # Get current order from tree
+                current_order = []
+                for cid in tree.get_children(""):
+                    current_order.append(tree.item(cid, "text"))
+                self.app.category_order = current_order
+                
+            order_list = self.app.category_order
+            if category_name in order_list:
+                idx = order_list.index(category_name)
+                new_idx = idx + direction
+                
+                # Check bounds
+                if 0 <= new_idx < len(order_list):
+                    # Swap
+                    order_list[idx], order_list[new_idx] = order_list[new_idx], order_list[idx]
+                    
+                    # Save and refresh
+                    if hasattr(self.app, "save_data"):
+                        self.app.save_data()
+                    self.refresh_list()
+        except Exception as e:
+            logging.error(f"Error moving category: {e}")
+
     def hide_inline_actions(self):
         """Hide the inline action buttons."""
         if self._inline_frame:
-            self._inline_frame.destroy()
+            try:
+                self._inline_frame.destroy()
+            except Exception:
+                pass
             self._inline_frame = None
-        self._hover_idx = -1
+        self._hover_item_id = None
+        self._last_inline_id = None
+        self._last_inline_selected = None
+        
+        # Also clear hover tags
+        try:
+            tree = self.app.lb
+            for item in tree.tag_has("hover"):
+                current_tags = list(tree.item(item, "tags"))
+                if "hover" in current_tags:
+                    current_tags.remove("hover")
+                    tree.item(item, tags=current_tags)
+        except Exception:
+            pass
 
     def _schedule_inline_hide(self, delay: int = 150):
         """Schedule hiding the inline actions."""
@@ -609,25 +872,26 @@ class ProfileManager:
             self.app.root.after_cancel(self._inline_hide_job)
             self._inline_hide_job = None
             
-    def _select_profile_by_index(self, idx: int):
-        """Helper to safely select a profile by index."""
-        if 0 <= idx < self.app.lb.size():
-            self.app.lb.selection_clear(0, tk.END)
-            self.app.lb.selection_set(idx)
-            self.app.lb.activate(idx)
-            self.app.on_select(None)
+    def _select_profile_by_id(self, item_id: str):
+        """Helper to safely select a profile by Treeview item ID."""
+        tree = self.app.lb
+        if item_id and tree.exists(item_id):
+            tree.selection_set(item_id)
+            tree.focus(item_id)
+            tree.see(item_id)
+            self.on_select(None)
 
-    def _inline_edit_profile(self):
-        """Handle click on inline edit button."""
-        if self._hover_idx != -1:
-            self._select_profile_by_index(self._hover_idx)
-            self.edit_profile()
+    def _inline_restart_profile(self):
+        """Handle click on inline restart button."""
+        if self._hover_item_id:
+            self._select_profile_by_id(self._hover_item_id)
+            self.app.restart_game()
 
-    def _inline_delete_profile(self):
-        """Handle click on inline delete button."""
-        if self._hover_idx != -1:
-            self._select_profile_by_index(self._hover_idx)
-            self.delete_profile()
+    def _inline_close_profile(self):
+        """Handle click on inline close button."""
+        if self._hover_item_id:
+            self._select_profile_by_id(self._hover_item_id)
+            self.app.close_game()
 
     def on_drag_start(self, event):
         """Handle drag start on profile list."""

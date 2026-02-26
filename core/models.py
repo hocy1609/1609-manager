@@ -88,6 +88,7 @@ class Profile:
     server: str = ""
     server_group: str = "siala"  # Which server group this profile uses
     order: int = 0  # Manual ordering within category
+    hotkey_on: bool = False  # Whether hotkeys only work for this profile
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Profile":
@@ -100,6 +101,7 @@ class Profile:
             server=_clean_str(data.get("server", "")),
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
             order=_clean_int(data.get("order", 0)),
+            hotkey_on=_clean_bool(data.get("hotkey_on", False)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -262,6 +264,7 @@ class Settings:
     run_on_startup: bool = False
     # User-defined category order (list of category names)
     category_order: List[str] = field(default_factory=list)
+    disable_hotkeys_on_multi_session: bool = False
 
     @classmethod
     def defaults(cls, docs: str, exe: str) -> "Settings":
@@ -327,6 +330,7 @@ class Settings:
             minimize_to_tray=_clean_bool(data.get("minimize_to_tray", True)),
             run_on_startup=_clean_bool(data.get("run_on_startup", False)),
             category_order=[_clean_str(c) for c in _clean_list(data.get("category_order", []))],
+            disable_hotkeys_on_multi_session=_clean_bool(data.get("disable_hotkeys_on_multi_session", False)),
         )
 
     def to_dict(self) -> Dict[str, Any]:

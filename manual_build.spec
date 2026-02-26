@@ -18,10 +18,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('logo.png', '.'), 
-        ('logo.ico', '.'),
+        (os.path.join('Assets', 'logo.ico'), 'Assets'),
         ('nwn_settings.example.json', '.'),
-        ('assets', 'assets'),
+        ('Assets', 'Assets'),
     ],
     hiddenimports=hidden_imports,
     hookspath=[],
@@ -51,7 +50,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='logo.ico'
+    icon=os.path.join('Assets', 'logo.ico')
 )
 
 coll = COLLECT(

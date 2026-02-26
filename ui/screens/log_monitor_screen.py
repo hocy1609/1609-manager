@@ -296,7 +296,7 @@ def build_log_monitor_screen(app):
     status_frame.pack(fill="x", pady=(10, 0))
 
     # Show actual status based on log_monitor state
-    is_running = hasattr(self, 'log_monitor_state') and self.log_monitor_state.monitor and self.log_monitor_state.monitor.running
+    is_running = hasattr(app, 'log_monitor_state') and app.log_monitor_state.enabled_var.get() and app.log_monitor_state.monitor and app.log_monitor_state.monitor.is_running()
     self.log_monitor_status = tk.Label(
         status_frame,
         text="Status: Running" if is_running else "Status: Stopped",

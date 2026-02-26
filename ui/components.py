@@ -468,9 +468,20 @@ class StatusBar:
             # Hotkeys status (text only, icon is separate)
             hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
             hotkeys_enabled = hotkeys_cfg.get('enabled', False)
-            hotkeys_active = hasattr(self.app, 'multi_hotkey_manager') and self.app.multi_hotkey_manager._running
+            hk_manager = getattr(self.app, 'multi_hotkey_manager', None)
+            hotkeys_active = hk_manager and hk_manager._running
             
+            # Check for pause (Manual or Smart Pause)
+            hk_paused = False
             if hotkeys_active:
+                multi_session_disable = getattr(self.app.settings, "disable_hotkeys_on_multi_session", False)
+                if hk_manager._paused or (session_count > 1 and multi_session_disable):
+                    hk_paused = True
+            
+            if hk_paused:
+                hotkeys_text = "Hotkeys: Paused"
+                hotkeys_fg = COLORS["warning"]
+            elif hotkeys_active:
                 binds_count = len([b for b in hotkeys_cfg.get('binds', []) if b.get('enabled', True)])
                 hotkeys_text = f"Hotkeys: On ({binds_count})"
                 hotkeys_fg = COLORS["success"]

@@ -1,20 +1,31 @@
 @echo off
 REM === 1609 Manager Build Script ===
-REM Builds to dist/ and preserves "1609 settings" folder
 
 cd /d "%~dp0"
 
-REM Activate virtual environment
-call .venv\Scripts\activate.bat
+echo [1/3] Closing running instances...
+taskkill /F /IM 1609Manager.exe /T 2>nul >nul
 
-REM Build with PyInstaller
-REM --distpath: output directory for the exe
-REM --workpath: build temp files
-REM --noconfirm: overwrite without asking
-REM --clean: clean PyInstaller cache before building
+echo [2/3] Activating environment...
+call .venv\Scripts\activate.bat 2>nul
+if %errorlevel% neq 0 (
+    echo [!] Warning: Could not activate .venv. Using global environment.
+)
 
-pyinstaller --noconfirm --clean --distpath=dist --workpath=build\onefile_build onefile_build.spec
+echo [3/3] Building executable...
+pyinstaller --noconfirm --clean --distpath=dist --workpath=build\onefile_build onefile_build.spec >nul 2>&1
 
-echo.
-echo Build complete! Output: dist\1609Manager.exe
-pause
+if %errorlevel% equ 0 (
+    echo.
+    echo ========================================
+    echo   BUILD SUCCESSFUL!
+    echo   Output: dist\1609Manager.exe
+    echo ========================================
+    echo Closing in 5 seconds...
+    ping -n 6 127.0.0.1 > nul
+) else (
+    echo.
+    echo [!] BUILD FAILED! Check build\onefile_build for logs.
+    pause
+)
+exit

@@ -159,19 +159,18 @@ def build_home_screen(app):
     Separator(game_split, orient="vertical", color=COLORS["border"], thickness=1, padding=0).pack(side="left", fill="y")
 
     accounts_wrap = tk.Frame(sidebar, bg=COLORS["bg_panel"])
-    accounts_wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    accounts_wrap.pack(fill="both", expand=True, padx=(10, 1), pady=(0, 10))
     # Replace Listbox with Treeview
     # Using "headings" show option to show column headers
     self.lb = ttk.Treeview(
         accounts_wrap,
-        selectmode="browse",
+        selectmode="extended",
         show="tree",
         style="ProfileList.Treeview"
     )
     
     # Configure columns
-    # Configure columns
-    self.lb.column("#0", width=260, anchor="w")
+    self.lb.column("#0", width=250, stretch=True, anchor="w")
     self.lb.heading("#0", text="Profile", anchor="w")
 
     # Scrollbar
@@ -344,10 +343,21 @@ def build_home_screen(app):
         text="\uE768",
         width=4,
         font=("Segoe Fluent Icons", 14),
-        command=self.launch_game,
-        tooltip="Запустить игру",
+        command=self.launch_selected,
+        tooltip="Запустить выбранные профили",
     )
     self.btn_play.pack(side="left", padx=(0, 6))
+    
+    # Label to show number of selected profiles
+    self.lbl_selected_count = tk.Label(
+        bottom_actions,
+        text="",
+        bg=COLORS["bg_root"],
+        fg=COLORS["accent"],
+        font=("Segoe UI", 10, "bold")
+    )
+    self.lbl_selected_count.pack(side="left", padx=(0, 10))
+
     self.ctrl_frame = tk.Frame(bottom_actions, bg=COLORS["bg_root"])
     self.ctrl_frame.pack(side="left")
     

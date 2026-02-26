@@ -11,6 +11,7 @@ import time
 import threading
 import ctypes
 import ctypes.wintypes
+from typing import Optional
 
 from utils.log_monitor import LogMonitor
 from ui.ui_base import COLORS
@@ -32,6 +33,10 @@ class LogMonitorManager:
             app: Reference to the NWNManagerApp instance
         """
         self.app = app
+        self._pending_open_wounds_press: Optional[str] = None
+        self._last_open_wounds_activation: float = 0.0
+        self._last_auto_fog_ts: Optional[str] = None
+        self._lm_save_after_id: Optional[str] = None
 
     def initialize_state(self):
         """Initialize log monitor-related state on the app (idempotent)."""

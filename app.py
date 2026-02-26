@@ -12,6 +12,7 @@ import ctypes.wintypes
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
+from typing import Optional
 
 import tkinter as tk
 from tkinter import messagebox, filedialog
@@ -129,6 +130,7 @@ class NWNManagerApp:
     server_manager: ServerManager
     tray_manager: TrayManager
     theme_manager: ThemeManager
+    settings: Settings
     
     # State attributes initialized in ui_state.py or load_data
     doc_path_var: tk.StringVar
@@ -143,6 +145,11 @@ class NWNManagerApp:
     esc_count: int
     clip_margin: int
     show_tooltips: bool
+    btn_play: tk.Button
+    btn_restart: tk.Button
+    btn_close: tk.Button
+    lbl_selected_count: tk.Label
+    ctrl_frame: tk.Frame
     profiles: list[Profile]
     servers: list[dict]
     server_group: str
@@ -158,7 +165,7 @@ class NWNManagerApp:
     _last_backup_time: float
     _last_session_count: int
     _last_running_state: bool
-    _save_after_id: str | None
+    _save_after_id: str | Optional[str]
 
     # Dynamic attributes from screen builders (monkey-patched at runtime)
     settings_exit_x: tk.StringVar
@@ -187,9 +194,9 @@ class NWNManagerApp:
         try:
             # Check bundle dir first (PyInstaller), then app dir
             base_path = getattr(sys, "_MEIPASS", self.app_dir)
-            icon_path = os.path.join(base_path, "logo.ico")
+            icon_path = os.path.join(base_path, "Assets", "logo.ico")
             if not os.path.exists(icon_path):
-                icon_path = os.path.join(self.app_dir, "logo.ico")
+                icon_path = os.path.join(self.app_dir, "Assets", "logo.ico")
             
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)
@@ -254,8 +261,12 @@ class NWNManagerApp:
                 logging.exception("Unhandled exception")
 
         # Register cleanup on normal interpreter exit
+        def _cleanup_wrapper(*args, **kwargs):
+            _cleanup_temp()
+
+        # Register cleanup on normal interpreter exit
         try:
-            atexit.register(_cleanup_temp)
+            atexit.register(_cleanup_wrapper)
         except Exception:
             logging.exception("Unhandled exception")
 
@@ -292,9 +303,14 @@ class NWNManagerApp:
 
         # Initialize theme manager after load_data (needs self.theme)
         self.theme_manager = ThemeManager(self)
+        self.theme_manager.apply_theme()
 
-        self.create_ui()
-        self.refresh_list()
+        # Multi-profile launch queue
+        self._launch_queue = []
+        self._processing_launch_queue = False
+        
+        # UI is already created by apply_theme() above (via rebuild_ui)
+        # So we just need to ensure initial selection and cleanup
         
         # Auto-select first profile if none selected and list not empty
         def _initial_select():
@@ -585,6 +601,9 @@ class NWNManagerApp:
         # Load saved CD keys
         self.saved_keys = list(settings.saved_keys)
         
+        # Store settings for easier access by other components
+        self.settings = settings
+        
         # Auto-import key from cdkey.ini if no saved keys exist
         if not self.saved_keys:
             cdkey_path = os.path.join(doc_path, "nwncdkey.ini")
@@ -642,6 +661,7 @@ class NWNManagerApp:
                 show_tooltips=getattr(self, "show_tooltips", True),
                 theme=getattr(self, "theme", "dark"),
                 category_order=getattr(self, "category_order", []),
+                disable_hotkeys_on_multi_session=getattr(self.settings, "disable_hotkeys_on_multi_session", False),
             )
             
             # Sync startup registry (failsafe)
@@ -674,9 +694,10 @@ class NWNManagerApp:
         while still keeping settings reasonably responsive.
         """
         try:
-            if hasattr(self, "_save_after_id") and self._save_after_id:
+            after_id = getattr(self, "_save_after_id", None)
+            if after_id is not None:
                 try:
-                    self.root.after_cancel(self._save_after_id)
+                    self.root.after_cancel(after_id)
                 except Exception:
                     logging.exception("Unhandled exception")
             def _do_save_callback(*args):
@@ -1595,14 +1616,16 @@ class NWNManagerApp:
                 controller = self.controller_profile_by_cdkey.get(cdkey)
                 if controller and controller != self.current_profile.get("playerName"):
                     # Не управляющий профиль: убрать и play, и ctrl_frame.
-                    try:
-                        self.btn_play.pack_forget()
-                    except Exception:
-                        logging.exception("Unhandled exception")
-                    try:
-                        self.ctrl_frame.pack_forget()
-                    except Exception:
-                        logging.exception("Unhandled exception")
+                    if hasattr(self, 'btn_play'):
+                        try:
+                            self.btn_play.pack_forget()
+                        except Exception:
+                            logging.exception("Unhandled exception")
+                    if hasattr(self, 'ctrl_frame'):
+                        try:
+                            self.ctrl_frame.pack_forget()
+                        except Exception:
+                            logging.exception("Unhandled exception")
                     self._last_running_state = running  # зафиксировать состояние
                     return
             except Exception:
@@ -1613,41 +1636,50 @@ class NWNManagerApp:
         self._last_running_state = running
 
         # Всегда показываем панель; только состояние кнопок меняем.
-        try:
-            self.btn_play.pack(side="left", padx=(0,6))
-        except Exception:
-            logging.exception("Unhandled exception")
-        try:
-            self.ctrl_frame.pack(side="left")
-        except Exception:
-            logging.exception("Unhandled exception")
+        if hasattr(self, 'btn_play'):
+            try:
+                self.btn_play.pack(side="left", padx=(0,6))
+            except Exception:
+                logging.exception("Unhandled exception")
+        
+        if hasattr(self, 'ctrl_frame'):
+            try:
+                self.ctrl_frame.pack(side="left")
+            except Exception:
+                logging.exception("Unhandled exception")
 
         if running:
-            try:
-                self.btn_play.configure(state="disabled")
-            except Exception:
-                logging.exception("Unhandled exception")
-            try:
-                self.btn_restart.configure(state="normal")
-            except Exception:
-                logging.exception("Unhandled exception")
-            try:
-                self.btn_close.configure(state="normal")
-            except Exception:
-                logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_play'):
+                try:
+                    self.btn_play.configure(state="disabled")
+                except Exception:
+                    logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_restart'):
+                try:
+                    self.btn_restart.configure(state="normal")
+                except Exception:
+                    logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_close'):
+                try:
+                    self.btn_close.configure(state="normal")
+                except Exception:
+                    logging.exception("Unhandled exception")
         else:
-            try:
-                self.btn_play.configure(state="normal")
-            except Exception:
-                logging.exception("Unhandled exception")
-            try:
-                self.btn_restart.configure(state="disabled")
-            except Exception:
-                logging.exception("Unhandled exception")
-            try:
-                self.btn_close.configure(state="disabled")
-            except Exception:
-                logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_play'):
+                try:
+                    self.btn_play.configure(state="normal")
+                except Exception:
+                    logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_restart'):
+                try:
+                    self.btn_restart.configure(state="disabled")
+                except Exception:
+                    logging.exception("Unhandled exception")
+            if hasattr(self, 'btn_close'):
+                try:
+                    self.btn_close.configure(state="disabled")
+                except Exception:
+                    logging.exception("Unhandled exception")
         # Состояние редактирования/удаления обновляется в on_select.
 
     def refresh_list(self):
@@ -1664,6 +1696,11 @@ class NWNManagerApp:
         """Delegate to ProfileManager."""
         if hasattr(self, 'profile_manager'):
             self.profile_manager.on_profile_list_leave(event)
+
+    def launch_selected(self):
+        """Delegate to ProfileManager."""
+        if hasattr(self, "profile_manager"):
+            self.profile_manager.launch_selected()
 
     def on_profile_list_scroll(self, event):
         """Delegate to ProfileManager."""
@@ -1690,10 +1727,10 @@ class NWNManagerApp:
         if hasattr(self, 'profile_manager'):
             self.profile_manager._cancel_inline_hide()
 
-    def _select_profile_by_index(self, idx):
+    def _select_profile_by_id(self, item_id):
         """Delegate to ProfileManager."""
         if hasattr(self, 'profile_manager'):
-            return self.profile_manager._select_profile_by_index(idx)
+            return self.profile_manager._select_profile_by_id(item_id)
         return False
 
     def _inline_edit_profile(self):
@@ -1787,10 +1824,40 @@ class NWNManagerApp:
 
     # === ЗАПУСК / ЗАКРЫТИЕ ИГРЫ ===
 
-    def launch_game(self):
+    def smart_launch_profiles(self, profiles: list):
+        """Add multiple profiles to the launch queue and start processing."""
+        if not profiles:
+            return
+            
+        self._launch_queue.extend(profiles)
+        
+        if not self._processing_launch_queue:
+            self._processing_launch_queue = True
+            threading.Thread(target=self._process_launch_queue, daemon=True).start()
+
+    def _process_launch_queue(self):
+        """Process the launch queue one by one with a delay."""
+        try:
+            while self._launch_queue:
+                profile = self._launch_queue.pop(0)
+                
+                # Use after() to ensure launch_game runs on main thread for UI safety
+                self.root.after(0, lambda p=profile: self.launch_game(p))
+                
+                # Wait for settings.tml to be safely processed by the game before next launch
+                # 3 seconds is a reasonable default for slow disk/updates
+                if self._launch_queue:
+                    time.sleep(3)
+        finally:
+            self._processing_launch_queue = False
+
+    def launch_game(self, profile=None):
         import subprocess
 
-        if not self.current_profile:
+        # If profile not provided, use current selection
+        target_profile = profile or self.current_profile
+
+        if not target_profile:
             messagebox.showwarning(
                 "Error", "Select a profile!", parent=self.root
             )
@@ -1800,7 +1867,7 @@ class NWNManagerApp:
 
         doc = self.doc_path_var.get()
         exe = self.exe_path_var.get()
-        key = self.current_profile["cdKey"]
+        key = target_profile["cdKey"]
 
         try:
             content = f"[NWN1]\nYourKey={key}\n"
@@ -1819,21 +1886,24 @@ class NWNManagerApp:
             if os.path.exists(tml_path):
                 os.chmod(tml_path, stat.S_IWRITE)
             robust_update_settings_tml(
-                tml_path, self.current_profile["playerName"]
+                tml_path, target_profile["playerName"]
             )
         except Exception as e:
             self.log_error("launch_game.file_update", e)
-            messagebox.showerror(
-                "File Error",
-                f"Could not update files:\n{e}",
-                parent=self.root,
-            )
+            if not profile: # Only show error dialog if manual single launch
+                messagebox.showerror(
+                    "File Error",
+                    f"Could not update files:\n{e}",
+                    parent=self.root,
+                )
             return
 
         cmd = [exe]
 
         if self.use_server_var.get():
-            srv_val = self.server_var.get().strip()
+            # If we are launching a specific profile, we might want to use its saved server
+            # instead of the currently selected one in the UI.
+            srv_val = target_profile.get("server", self.server_var.get()).strip()
             srv_ip = next(
                 (s["ip"] for s in self.servers if s["name"] == srv_val),
                 srv_val,
@@ -1841,7 +1911,7 @@ class NWNManagerApp:
             if srv_ip:
                 cmd.extend(["+connect", srv_ip])
 
-        args = self.current_profile.get("launchArgs", "").strip()
+        args = target_profile.get("launchArgs", "").strip()
         if args:
             cmd.extend(args.split())
 
@@ -1853,16 +1923,20 @@ class NWNManagerApp:
             # Назначаем контролирующий профиль для ключа, если еще не назначен.
             try:
                 if key not in self.controller_profile_by_cdkey:
-                    self.controller_profile_by_cdkey[key] = self.current_profile.get("playerName", "")
+                    self.controller_profile_by_cdkey[key] = target_profile.get("playerName", "")
             except Exception:
                 logging.exception("Unhandled exception")
-            self.refresh_list()
-            self.update_launch_buttons()
+            
+            # Update UI on main thread
+            self.root.after(0, self.refresh_list)
+            self.root.after(0, self.update_launch_buttons)
+            
             # можно включать лог-монитор вместе с игрой
-            self.start_log_monitor()
+            self.root.after(0, self.start_log_monitor)
         except Exception as e:
             self.log_error("launch_game.Popen", e)
-            messagebox.showerror("Launch Error", str(e), parent=self.root)
+            if not profile:
+                messagebox.showerror("Launch Error", str(e), parent=self.root)
 
     def close_game(self):
         if not self.current_profile:
