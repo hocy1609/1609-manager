@@ -16,21 +16,7 @@ from typing import Dict, List, Optional, Any
 from ui.ui_base import COLORS, ModernButton, bind_hover_effects
 from core.models import Profile
 from ui.dialogs import EditDialog
-
-
-def _get_attr(obj, name: str, default=None):
-    """Get attribute from Profile dataclass or dict. Supports transition period."""
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-
-def _set_attr(obj, name: str, value):
-    """Set attribute on Profile dataclass or dict. Supports transition period."""
-    if isinstance(obj, dict):
-        obj[name] = value
-    else:
-        setattr(obj, name, value)
+from core.profile_service import ProfileService, _get_attr, _set_attr
 
 class ProfileManager:
     """
@@ -48,6 +34,11 @@ class ProfileManager:
             app: Reference to the NWNManagerApp instance
         """
         self.app = app
+        if hasattr(self.app, 'data_manager'):
+            self.service = ProfileService(self.app.data_manager)
+        else:
+            self.service = None  # Will be initialized after app finishes setup
+        
         self.collapsed_categories = set()
         
         # State for inline actions
@@ -59,18 +50,24 @@ class ProfileManager:
         
     def move_profile_to_group(self, profile, target_group):
         """Move profile to another server group and refresh list."""
-        if isinstance(profile, dict):
-            profile["server_group"] = target_group
+        if getattr(self, 'service', None):
+            self.service.move_to_group(profile, target_group)
+            self.refresh_list()
         else:
-            profile.server_group = target_group
-        
-        self.app.save_data()
-        self.refresh_list()
+            if isinstance(profile, dict):
+                profile["server_group"] = target_group
+            else:
+                profile.server_group = target_group
+            self.app.save_data()
+            self.refresh_list()
         
     def refresh_list(self):
         """Refreshes the profile list (Treeview) with categories."""
         if not hasattr(self.app, 'lb'):
             return
+
+        # Destroy stale inline action frames before rebuilding treeview
+        self.hide_inline_actions()
 
         tree = self.app.lb
         # Clear tree
@@ -186,6 +183,8 @@ class ProfileManager:
             
     def get_unique_categories(self) -> List[str]:
         """Return a sorted list of unique profile categories, with 'General' first."""
+        if getattr(self, 'service', None):
+            return self.service.get_unique_categories()
         cats = set()
         for p in self.app.profiles:
             cats.add(_get_attr(p, "category", "General"))
@@ -203,21 +202,24 @@ class ProfileManager:
         cats = self.get_unique_categories()
         
         def on_save(data: dict):
-            # Create new profile dict
-            new_p = {
-                "name": data.get("name", "New Profile"),
-                "desc": data.get("desc", ""),
-                "playerName": data.get("playerName", ""),
-                "cdKey": data.get("cdKey", ""),
-                "server": data.get("server", ""),
-                "password": data.get("password", ""),
-                "category": data.get("category", "General"),
-                "launchArgs": data.get("launchArgs", ""),
-                "is_crafter": bool(data.get("is_crafter", False)),
-                "server_group": self.app.server_group if hasattr(self.app, 'server_group') else "siala",
-            }
-            self.app.profiles.append(new_p)
-            self.app.save_data()
+            if getattr(self, 'service', None):
+                new_p = self.service.add_profile(data)
+            else:
+                # Fallback Create new profile dict
+                new_p = {
+                    "name": data.get("name", "New Profile"),
+                    "desc": data.get("desc", ""),
+                    "playerName": data.get("playerName", ""),
+                    "cdKey": data.get("cdKey", ""),
+                    "server": data.get("server", ""),
+                    "password": data.get("password", ""),
+                    "category": data.get("category", "General"),
+                    "launchArgs": data.get("launchArgs", ""),
+                    "is_crafter": bool(data.get("is_crafter", False)),
+                    "server_group": self.app.server_group if hasattr(self.app, 'server_group') else "siala",
+                }
+                self.app.profiles.append(new_p)
+                self.app.save_data()
             
             # Select the new profile
             self.app.current_profile = new_p
@@ -247,18 +249,21 @@ class ProfileManager:
         old_p = self.app.current_profile
 
         def on_save(data: dict):
-            # Update existing profile
-            old_p["name"] = data.get("name", old_p.get("name", ""))
-            old_p["desc"] = data.get("desc", old_p.get("desc", ""))
-            old_p["playerName"] = data.get("playerName", old_p.get("playerName", ""))
-            old_p["cdKey"] = data.get("cdKey", old_p.get("cdKey", ""))
-            old_p["server"] = data.get("server", old_p.get("server", ""))
-            old_p["password"] = data.get("password", old_p.get("password", ""))
-            old_p["category"] = data.get("category", "General")
-            old_p["launchArgs"] = data.get("launchArgs", "")
-            old_p["is_crafter"] = bool(data.get("is_crafter", False))
-            
-            self.app.save_data()
+            if getattr(self, 'service', None):
+                self.service.update_profile(old_p, data)
+            else:
+                # Update existing profile
+                old_p["name"] = data.get("name", old_p.get("name", ""))
+                old_p["desc"] = data.get("desc", old_p.get("desc", ""))
+                old_p["playerName"] = data.get("playerName", old_p.get("playerName", ""))
+                old_p["cdKey"] = data.get("cdKey", old_p.get("cdKey", ""))
+                old_p["server"] = data.get("server", old_p.get("server", ""))
+                old_p["password"] = data.get("password", old_p.get("password", ""))
+                old_p["category"] = data.get("category", "General")
+                old_p["launchArgs"] = data.get("launchArgs", "")
+                old_p["is_crafter"] = bool(data.get("is_crafter", False))
+                self.app.save_data()
+
             # Ensure current profile remains selected
             self.app.current_profile = old_p
             self.refresh_list()
@@ -283,12 +288,15 @@ class ProfileManager:
         
         name = self.app.current_profile.get("name", "Unknown")
         if messagebox.askyesno("Delete Profile", f"Are you sure you want to delete '{name}'?"):
-            if self.app.current_profile in self.app.profiles:
+            if getattr(self, 'service', None):
+                 self.service.delete_profile(self.app.current_profile)
+                 self.app.current_profile = None
+            elif self.app.current_profile in self.app.profiles:
                 self.app.profiles.remove(self.app.current_profile)
                 self.app.current_profile = None
                 self.app.save_data()
-                self.refresh_list()
-                self.app.on_select(None)
+            self.refresh_list()
+            self.app.on_select(None)
 
     def rename_category(self, old_name: str):
         """Renames a category and updates all profiles in it."""
@@ -299,15 +307,17 @@ class ProfileManager:
         
         new_name = getattr(dialog, 'result', None)
         if new_name and new_name != old_name:
-            changed = False
-            for p in self.app.profiles:
-                if _get_attr(p, "category") == old_name:
-                    p["category"] = new_name
-                    changed = True
-            
-            if changed:
-                self.app.save_data()
-                self.refresh_list()
+            if getattr(self, 'service', None):
+                self.service.rename_category(old_name, new_name)
+            else:
+                changed = False
+                for p in self.app.profiles:
+                    if _get_attr(p, "category") == old_name:
+                        p["category"] = new_name
+                        changed = True
+                if changed:
+                    self.app.save_data()
+            self.refresh_list()
 
     def toggle_category(self, category: str):
         """Toggle collapsed state of a category."""
@@ -319,24 +329,23 @@ class ProfileManager:
 
     def move_category_to_group(self, category_name: str, target_group: str):
         """Move all profiles in a category to another server group."""
-        # Find all profiles in this category AND current server group (implicit, since we only see current group)
-        # Actually, if we move a category, we likely want to move ALL profiles in that category regardless of their current group?
-        # OR just the ones visible? User probably expects visible ones if they are filtered.
-        # But wait, if I move "General" to Cormyr, do I want profiles in "General" that are already in Cormyr to stay? Yes.
-        # Do I want profiles in "General" that are in `siala` (current) to move to `cormyr`? Yes.
-        
         current_group = getattr(self.app, 'server_group', 'siala')
-        count = 0
-        for p in self.app.profiles:
-            p_cat = _get_attr(p, "category", "General")
-            p_group = _get_attr(p, "server_group", "siala")
-            
-            if p_cat == category_name and p_group == current_group:
-                _set_attr(p, "server_group", target_group)
-                count += 1
         
+        if getattr(self, 'service', None):
+            count = self.service.move_category_to_group(category_name, current_group, target_group)
+        else:
+            count = 0
+            for p in self.app.profiles:
+                p_cat = _get_attr(p, "category", "General")
+                p_group = _get_attr(p, "server_group", "siala")
+                
+                if p_cat == category_name and p_group == current_group:
+                    _set_attr(p, "server_group", target_group)
+                    count += 1
+            if count > 0:
+                self.app.save_data()
+                
         if count > 0:
-            self.app.save_data()
             self.refresh_list()
             messagebox.showinfo("Move Category", f"Moved {count} profiles from '{category_name}' to {target_group.title()}.")
         else:
@@ -441,19 +450,42 @@ class ProfileManager:
         if profiles:
             self.app.smart_launch_profiles(profiles)
 
+    def close_selected(self):
+        """Close game for all selected profiles that are currently running."""
+        tree = self.app.lb
+        selection = tree.selection()
+        for item_id in selection:
+            if item_id in self.item_map:
+                profile = self.item_map[item_id]
+                key = profile.get("cdKey")
+                if key and key in self.app.sessions.sessions:
+                    self.app.close_game_for_profile(profile)
+
+    def restart_selected(self):
+        """Restart game for all selected profiles that are currently running."""
+        tree = self.app.lb
+        selection = tree.selection()
+        profiles_to_restart = []
+        for item_id in selection:
+            if item_id in self.item_map:
+                profile = self.item_map[item_id]
+                key = profile.get("cdKey")
+                if key and key in self.app.sessions.sessions:
+                    profiles_to_restart.append(profile)
+        
+        for profile in profiles_to_restart:
+            self.app.restart_game_for_profile(profile)
+
     def toggle_hotkey_on(self, prof):
         """Toggle hotkey_on for a profile (exclusive behavior)."""
-        new_val = not _get_attr(prof, "hotkey_on", False)
-        
-        # Turn off for all first
-        for p in self.app.profiles:
-            _set_attr(p, "hotkey_on", False)
-            
-        # Set new value
-        _set_attr(prof, "hotkey_on", new_val)
-        
-        # Persistence and UI update
-        self.app.save_data()
+        if getattr(self, 'service', None):
+            self.service.set_hotkey_exclusive(prof)
+        else:
+            new_val = not _get_attr(prof, "hotkey_on", False)
+            for p in self.app.profiles:
+                _set_attr(p, "hotkey_on", False)
+            _set_attr(prof, "hotkey_on", new_val)
+            self.app.save_data()
         self.refresh_list()
         
         # Signal to hotkey manager if running? 
@@ -503,11 +535,19 @@ class ProfileManager:
                 self.app.lbl_selected_count.config(text=f"Выбрано профилей: {len(selection)}")
             if hasattr(self.app, 'btn_play'):
                 self.app.btn_play.config(command=self.launch_selected)
+            if hasattr(self.app, 'btn_restart'):
+                self.app.btn_restart.config(command=self.restart_selected)
+            if hasattr(self.app, 'btn_close'):
+                self.app.btn_close.config(command=self.close_selected)
         else:
             if hasattr(self.app, 'lbl_selected_count'):
                 self.app.lbl_selected_count.config(text="")
             if hasattr(self.app, 'btn_play'):
                 self.app.btn_play.config(command=lambda: self.app.launch_game(self.item_map.get(item_id)))
+            if hasattr(self.app, 'btn_restart'):
+                self.app.btn_restart.config(command=self.app.restart_game)
+            if hasattr(self.app, 'btn_close'):
+                self.app.btn_close.config(command=self.app.close_game)
 
         # Check if it's a profile
         if item_id in self.item_map:
@@ -753,7 +793,8 @@ class ProfileManager:
             btn_width = 85
         else:
             # Inline actions for profiles
-            # Play btn (▶)
+            # Play btn (▶) — capture profile object directly to avoid stale item ID
+            profile_for_launch = self.item_map.get(idx)
             btn_play = tk.Label(
                 inner, text="▶", bg=bg_color, 
                 fg=COLORS["success"], 
@@ -761,7 +802,7 @@ class ProfileManager:
                 padx=4, pady=0
             )
             btn_play.pack(side="left", padx=(0, 2))
-            btn_play.bind("<Button-1>", lambda e: self.app.launch_game(self.item_map.get(idx)))
+            btn_play.bind("<Button-1>", lambda e, p=profile_for_launch: self.app.launch_game(p))
             
             # Hover colors
             play_hover = COLORS["success_hover"]
@@ -803,9 +844,17 @@ class ProfileManager:
         
         self._inline_frame.place(x=place_x, y=y, width=btn_width, height=h)
         
-        # Bind enter/leave for the frame too, so it doesn't disappear when we move mouse over it
+        # Bind enter/leave for the frame and ALL children,
+        # so it doesn't disappear when mouse moves from frame to a child button
         self._inline_frame.bind("<Enter>", lambda e: self._cancel_inline_hide())
         self._inline_frame.bind("<Leave>", lambda e: self._schedule_inline_hide())
+        for child in self._inline_frame.winfo_children():
+            child.bind("<Enter>", lambda e: self._cancel_inline_hide())
+            child.bind("<Leave>", lambda e: self._schedule_inline_hide())
+            # Also bind grandchildren (buttons inside inner frame)
+            for grandchild in child.winfo_children():
+                grandchild.bind("<Enter>", lambda e: self._cancel_inline_hide())
+                grandchild.bind("<Leave>", lambda e: self._schedule_inline_hide())
 
     def _inline_play_category(self, cat_id: str):
         """Action when Play is clicked on a category."""

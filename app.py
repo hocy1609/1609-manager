@@ -49,6 +49,7 @@ from core.profile_manager import ProfileManager
 from core.settings_manager import SettingsManager
 from core.ui_state import UIStateManager
 from core.server_manager import ServerManager
+from core.data_manager import DataManager
 from core.error_handler import ErrorHandler
 from core.tray_manager import TrayManager
 from core.constants import (
@@ -185,6 +186,7 @@ class NWNManagerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.ui_state_manager = UIStateManager(self)
+        self.data_manager = DataManager(self)
         self.ui_state_manager.configure_root_window()
         self.ui_state_manager.initialize_state()
 
@@ -336,6 +338,18 @@ class NWNManagerApp:
         self.root.after(STARTUP_PATH_CHECK_DELAY_MS, self.check_paths_silent)
         self.root.after(APPWINDOW_SETUP_DELAY_MS, self.set_appwindow)
         
+        # Initialize hotkey enabled variable
+        hotkeys_cfg = getattr(self, 'hotkeys_config', {})
+        self.hotkeys_enabled_var = tk.BooleanVar(value=hotkeys_cfg.get("enabled", False))
+        
+        def _on_hotkey_toggle_change(*args):
+            self._apply_saved_hotkeys()
+            # If the hotkeys screen is active, it will need to refresh its labels.
+            # We can trigger a reload of the screen or just let it be.
+            # Actually, standardizing on self.hotkeys_enabled_var is enough.
+        
+        self.hotkeys_enabled_var.trace_add("write", _on_hotkey_toggle_change)
+
         # Auto-register hotkeys if enabled in settings
         self.root.after(500, self._apply_saved_hotkeys)
 
@@ -432,260 +446,21 @@ class NWNManagerApp:
     # === МИГРАЦИЯ И БЭКАПЫ ===
 
     def _migrate_old_settings(self):
-        """Migrate settings files from old location (app_dir) to new location (data_dir/1609 settings)."""
-        import shutil
-        try:
-            old_settings = os.path.join(self.app_dir, SETTINGS_FILE)
-            old_sessions = os.path.join(self.app_dir, SESSIONS_FILE)
-            old_log = os.path.join(self.app_dir, LOG_FILENAME)
-            
-            # Migrate settings
-            if os.path.exists(old_settings) and not os.path.exists(self.settings_path):
-                try:
-                    shutil.move(old_settings, self.settings_path)
-                    logging.info(f"Migrated {SETTINGS_FILE} to new location")
-                except Exception as e:
-                    logging.exception(f"Failed to migrate {SETTINGS_FILE}")
-            
-            # Migrate sessions
-            if os.path.exists(old_sessions) and not os.path.exists(self.sessions_path):
-                try:
-                    shutil.move(old_sessions, self.sessions_path)
-                    logging.info(f"Migrated {SESSIONS_FILE} to new location")
-                except Exception as e:
-                    logging.exception(f"Failed to migrate {SESSIONS_FILE}")
-            
-            # Migrate log (copy instead of move - log file may be in use)
-            if os.path.exists(old_log) and not os.path.exists(self.log_path):
-                try:
-                    shutil.copy2(old_log, self.log_path)
-                    logging.info(f"Copied {LOG_FILENAME} to new location")
-                except PermissionError:
-                    pass  # Log file in use, skip silently
-                except Exception as e:
-                    pass  # Non-critical, skip
-        except Exception as e:
-            logging.exception("Error during settings migration")
+        self.data_manager.migrate_old_settings()
 
     def _backup_settings(self):
-        """Create a timestamped backup of nwn_settings.json in the backups folder."""
-        import shutil
-        try:
-            if not os.path.exists(self.settings_path):
-                return  # Nothing to backup
-            
-            # Only backup once per minute to avoid excessive backups
-            last_backup_time = getattr(self, '_last_backup_time', 0)
-            current_time = time.time()
-            if current_time - last_backup_time < 60:
-                return  # Skip backup if less than 1 minute since last
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_name = f"nwn_settings_{timestamp}.json"
-            backup_path = os.path.join(self.backups_dir, backup_name)
-            
-            shutil.copy2(self.settings_path, backup_path)
-            self._last_backup_time = current_time
-            
-            # Cleanup old backups (keep only last 10)
-            self._cleanup_old_backups()
-        except Exception as e:
-            logging.exception("Failed to create settings backup")
+        self.data_manager.backup_settings()
 
     def _cleanup_old_backups(self, max_backups: int = 10):
-        """Remove old backups keeping only the most recent ones."""
-        try:
-            backup_files = [
-                os.path.join(self.backups_dir, f)
-                for f in os.listdir(self.backups_dir)
-                if f.startswith("nwn_settings_") and f.endswith(".json")
-            ]
-            backup_files.sort(key=os.path.getmtime, reverse=True)
-            
-            # Remove excess backups
-            for old_backup in backup_files[max_backups:]:
-                try:
-                    os.remove(old_backup)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        self.data_manager.cleanup_old_backups(max_backups)
 
     # === ЗАГРУЗКА / СОХРАНЕНИЕ ===
 
     def load_data(self):
-        default_docs = os.path.join(
-            os.path.expanduser("~"), "Documents", "Neverwinter Nights"
-        )
-        detected_exe = auto_detect_nwn_path()
-        default_exe = (
-            detected_exe
-            if detected_exe
-            else r"C:\Program Files (x86)\Steam\steamapps\common\Neverwinter Nights\bin\win32\nwmain.exe"
-        )
-
-        try:
-            settings = load_settings(self.settings_path, default_docs, default_exe)
-        except Exception as e:
-            self.log_error("load_settings", e)
-            settings = Settings.defaults(default_docs, default_exe)
-
-        # Load server groups
-        self.server_group = settings.server_group
-        self.server_groups = settings.server_groups
-        
-        # Set servers from current group
-        if self.server_group in self.server_groups:
-            self.servers = self.server_groups[self.server_group]
-        else:
-            self.servers = self.server_groups.get("siala", [])
-        
-        self.profiles = list(settings.profiles)  # Store as List[Profile], not List[Dict]
-        # Fix doc_path if it contains USER placeholder
-        doc_path = settings.doc_path
-        if "USER" in doc_path or not os.path.exists(doc_path):
-            doc_path = default_docs
-        self.doc_path_var.set(doc_path)
-        self.exe_path_var.set(settings.exe_path if os.path.exists(settings.exe_path) else default_exe)
-        self.use_server_var.set(settings.auto_connect)
-
-        self.exit_x = settings.exit_coords_x
-        self.exit_y = settings.exit_coords_y
-        self.confirm_x = settings.confirm_coords_x
-        self.confirm_y = settings.confirm_coords_y
-        self.exit_speed = settings.exit_speed
-        self.esc_count = settings.esc_count
-        self.clip_margin = settings.clip_margin
-        self.show_tooltips = settings.show_tooltips
-        self.theme = settings.theme
-        self.category_order = list(settings.category_order)  # User-defined category order
-
-        try:
-            import ui.ui_base as _uib
-
-            _uib.TOOLTIPS_ENABLED = self.show_tooltips
-            try:
-                _uib.set_theme(self.theme, root=self.root)
-            except Exception:
-                _uib.set_theme(self.theme)
-        except Exception:
-            logging.exception("Unhandled exception")
-
-        try:
-            if self.servers:
-                srv_names = [s["name"] for s in self.servers]
-                last_srv = settings.last_server
-                if last_srv in srv_names:
-                    self.server_var.set(last_srv)
-                else:
-                    self.server_var.set(srv_names[0])
-        except Exception:
-            logging.exception("Unhandled exception")
-
-        # Log monitor path should always use real user's Documents folder
-        real_docs_path = os.path.join(os.path.expanduser("~"), "Documents", "Neverwinter Nights")
-        lm_default_path = os.path.join(real_docs_path, "logs", "nwclientLog1.txt")
-        lm_cfg = settings.log_monitor
-        if lm_cfg.log_path == "" or "USER" in lm_cfg.log_path:
-            lm_cfg.log_path = lm_default_path
-        self.log_monitor_state.config = lm_cfg.to_dict()
-        self.log_monitor_state.config.setdefault("open_wounds", {"enabled": False, "key": "F1"})
-        self.log_monitor_state.config.setdefault("keybind", {"enabled": False, "key": "F10"})
-
-        # Load hotkeys config from top-level settings
-        self.hotkeys_config = settings.hotkeys.to_dict()
-        
-        # Load sessions from settings
-        self._settings_sessions = dict(settings.sessions)
-        
-        # Load saved CD keys
-        self.saved_keys = list(settings.saved_keys)
-        
-        # Store settings for easier access by other components
-        self.settings = settings
-        
-        # Auto-import key from cdkey.ini if no saved keys exist
-        if not self.saved_keys:
-            cdkey_path = os.path.join(doc_path, "nwncdkey.ini")
-            if os.path.exists(cdkey_path):
-                try:
-                    with open(cdkey_path, "r", encoding="utf-8", errors="ignore") as f:
-                        for line in f:
-                            if line.strip().startswith("Key1="):
-                                key_value = line.strip().split("=", 1)[1].strip()
-                                if key_value and len(key_value) > 10:
-                                    self.saved_keys.append({"name": "Main Key", "key": key_value})
-                                break
-                except Exception:
-                    pass
-
-        if not os.path.exists(self.settings_path):
-            try:
-                self.save_data()
-            except Exception:
-                logging.exception("Unhandled exception")
+        self.data_manager.load_data()
 
     def save_data(self):
-        try:
-            # Create backup of existing settings before saving
-            self._backup_settings()
-            
-            servers = [Server.from_dict(s) if isinstance(s, dict) else s for s in self.servers]
-            profiles = [Profile.from_dict(p) if isinstance(p, dict) else p for p in self.profiles]
-            lm_cfg = LogMonitorConfig.from_dict(self.log_monitor_state.config or {})
-            hotkeys_cfg = HotkeysConfig.from_dict(getattr(self, "hotkeys_config", {}))
-            # Get current sessions from SessionManager
-            sessions_data = self.sessions.sessions if hasattr(self, 'sessions') else {}
-            
-            # Update current group's servers before saving
-            if hasattr(self, 'server_groups') and hasattr(self, 'server_group'):
-                self.server_groups[self.server_group] = self.servers
-            
-            settings = Settings(
-                doc_path=self.doc_path_var.get(),
-                exe_path=self.exe_path_var.get(),
-                servers=servers,
-                profiles=profiles,
-                auto_connect=self.use_server_var.get(),
-                last_server=self.server_var.get(),
-                exit_coords_x=self.exit_x,
-                exit_coords_y=self.exit_y,
-                confirm_coords_x=self.confirm_x,
-                confirm_coords_y=self.confirm_y,
-                log_monitor=lm_cfg,
-                hotkeys=hotkeys_cfg,
-                sessions=sessions_data,
-                exit_speed=getattr(self, "exit_speed", 0.1),
-                esc_count=getattr(self, "esc_count", 1),
-                clip_margin=getattr(self, "clip_margin", 48),
-                show_tooltips=getattr(self, "show_tooltips", True),
-                theme=getattr(self, "theme", "dark"),
-                category_order=getattr(self, "category_order", []),
-                disable_hotkeys_on_multi_session=getattr(self.settings, "disable_hotkeys_on_multi_session", False),
-            )
-            
-            # Sync startup registry (failsafe)
-            try:
-                from utils.win_automation import set_run_on_startup
-                set_run_on_startup(getattr(self, "run_on_startup", False))
-            except Exception:
-                pass
-                
-            save_settings(self.settings_path, settings)
-        except Exception as e:
-            self.log_error("save_data", e)
-            print(f"SAVE ERROR: {e}")
-
-        # DEBUG: Print what we just saved
-        try:
-            print(f"DEBUG: Saved keys count: {len(getattr(self, 'saved_keys', []))}")
-            if getattr(self, 'saved_keys', []):
-                print(f"DEBUG: Saved keys content: {self.saved_keys}")
-            
-            hk = getattr(self, 'hotkeys_config', {})
-            print(f"DEBUG: Hotkeys config: {hk}")
-        except Exception as e:
-            print(f"DEBUG ERROR: {e}")
+        self.data_manager.save_data()
 
     def schedule_save(self, delay_ms: int = SAVE_DEBOUNCE_DELAY_MS):
         """Debounced save: schedule `save_data` after `delay_ms` milliseconds, cancelling previous schedule.
@@ -708,197 +483,10 @@ class NWNManagerApp:
             self.log_error("schedule_save", e)
 
     def export_data(self, parent=None):
-        parent = parent or self.root
-        timestamp = datetime.now().strftime("%Y%m%d")
-        default_name = f"nwn_manager_profiles_{timestamp}.json"
-
-        f = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            initialfile=default_name,
-            filetypes=[("JSON Files", "*.json")],
-            title="Export Profiles",
-            parent=parent,
-        )
-        if not f:
-            return
-
-        data_to_export = {
-            "version": "1.0",
-            "timestamp": datetime.now().isoformat(),
-            "profiles": [p.to_dict() if hasattr(p, 'to_dict') else p for p in self.profiles],
-            "servers": self.servers,
-            "hotkeys": getattr(self, "hotkeys_config", {}),
-            "log_monitor": self.log_monitor_state.config if hasattr(self, 'log_monitor_state') else {},
-            "app_settings": {
-                "theme": getattr(self, "theme", "dark"),
-                "auto_connect": self.use_server_var.get(),
-                "doc_path": self.doc_path_var.get(),
-                "exe_path": self.exe_path_var.get(),
-                "exit_coords_x": getattr(self, "exit_x", 0),
-                "exit_coords_y": getattr(self, "exit_y", 0),
-                "confirm_coords_x": getattr(self, "confirm_x", 0),
-                "confirm_coords_y": getattr(self, "confirm_y", 0),
-                "exit_speed": getattr(self, "exit_speed", 0.1),
-                "esc_count": getattr(self, "esc_count", 1),
-                "clip_margin": getattr(self, "clip_margin", 48),
-                "server_group": getattr(self, "server_group", "siala"),
-                "saved_keys": getattr(self, "saved_keys", []),
-                "minimize_to_tray": getattr(self, "minimize_to_tray", True),
-                "run_on_startup": getattr(self, "run_on_startup", False),
-            }
-        }
-
-        try:
-            with open(f, "w", encoding="utf-8") as outfile:
-                json.dump(data_to_export, outfile, indent=4, ensure_ascii=False)
-            messagebox.showinfo(
-                "Export Success",
-                f"Data saved to:\n{f}",
-                parent=parent,
-            )
-        except Exception as e:
-            self.log_error("export_data", e)
-            messagebox.showerror("Export Error", str(e), parent=parent)
+        self.data_manager.export_data(parent)
 
     def import_data(self, parent=None):
-        """Import backup data with selective restore dialog."""
-        from ui.dialogs import SelectiveRestoreDialog
-        
-        parent = parent or self.root
-
-        f = filedialog.askopenfilename(
-            filetypes=[("JSON Files", "*.json")],
-            title="Restore Backup",
-            parent=parent,
-        )
-        if not f:
-            return
-
-        try:
-            with open(f, "r", encoding="utf-8") as infile:
-                backup_data = json.load(infile)
-            
-            # Check if it's a valid backup or legacy profiles-only file
-            if isinstance(backup_data, list):
-                # Legacy format: just a list of profiles
-                backup_data = {"profiles": backup_data, "version": "legacy"}
-            
-            def on_restore(selected_data: dict):
-                """Apply selected data categories."""
-                try:
-                    from core.models import Profile
-                    
-                    merge_mode = selected_data.pop("_merge", False)
-                    
-                    # Restore Profiles
-                    if "profiles" in selected_data:
-                        imported = []
-                        for p in selected_data["profiles"]:
-                            if isinstance(p, dict):
-                                try:
-                                    imported.append(Profile.from_dict(p))
-                                except Exception:
-                                    imported.append(p)
-                            else:
-                                imported.append(p)
-                        
-                        if merge_mode:
-                            # Build set of existing profile identifiers
-                            existing_ids = set()
-                            for ep in self.profiles:
-                                name = ep.playerName if hasattr(ep, 'playerName') else ep.get("playerName", "")
-                                key = ep.cdKey if hasattr(ep, 'cdKey') else ep.get("cdKey", "")
-                                existing_ids.add((name, key))
-                            
-                            added = 0
-                            for ip in imported:
-                                name = ip.playerName if hasattr(ip, 'playerName') else ip.get("playerName", "")
-                                key = ip.cdKey if hasattr(ip, 'cdKey') else ip.get("cdKey", "")
-                                if (name, key) not in existing_ids:
-                                    self.profiles.append(ip)
-                                    existing_ids.add((name, key))
-                                    added = added + 1
-                        else:
-                            self.profiles = imported
-                    
-                    # Restore Servers
-                    if "servers" in selected_data:
-                        self.servers = selected_data["servers"]
-                        # Clean up invalid entries
-                        self.servers = [
-                            s for s in self.servers
-                            if s.get("ip") and s.get("name") != "Без авто-подключения (Меню)"
-                        ]
-                    
-                    # Restore Hotkeys
-                    if "hotkeys" in selected_data:
-                        self.hotkeys_config = selected_data["hotkeys"]
-                        if self.hotkeys_config.get("enabled", False):
-                            self._apply_saved_hotkeys()
-                        else:
-                            if hasattr(self, 'multi_hotkey_manager'):
-                                self.multi_hotkey_manager.unregister_all()
-                    
-                    # Restore Log Monitor
-                    if "log_monitor" in selected_data:
-                        self.log_monitor_state.config = selected_data["log_monitor"]
-                    
-                    # Restore App Settings
-                    if "app_settings" in selected_data:
-                        app_settings = selected_data["app_settings"]
-                        self.theme = app_settings.get("theme", self.theme)
-                        self.use_server_var.set(app_settings.get("auto_connect", False))
-                        self.doc_path_var.set(app_settings.get("doc_path", self.doc_path_var.get()))
-                        self.exe_path_var.set(app_settings.get("exe_path", self.exe_path_var.get()))
-                        
-                        self.exit_x = app_settings.get("exit_coords_x", self.exit_x)
-                        self.exit_y = app_settings.get("exit_coords_y", self.exit_y)
-                        self.confirm_x = app_settings.get("confirm_coords_x", self.confirm_x)
-                        self.confirm_y = app_settings.get("confirm_coords_y", self.confirm_y)
-                        self.exit_speed = app_settings.get("exit_speed", self.exit_speed)
-                        self.esc_count = app_settings.get("esc_count", self.esc_count)
-                        self.clip_margin = app_settings.get("clip_margin", self.clip_margin)
-                        
-                        self.server_group = app_settings.get("server_group", self.server_group)
-                        
-                        self.minimize_to_tray = app_settings.get("minimize_to_tray", getattr(self, "minimize_to_tray", True))
-                        self.run_on_startup = app_settings.get("run_on_startup", getattr(self, "run_on_startup", False))
-                        
-                        # Apply Theme immediately
-                        if hasattr(self, 'theme_manager'):
-                            self.theme_manager.apply_theme()
-                    
-                    # Restore CD Keys
-                    if "saved_keys" in selected_data:
-                        self.saved_keys = selected_data["saved_keys"]
-                    
-                    self.save_data()
-                    self.refresh_list()
-                    if hasattr(self, '_create_server_buttons'):
-                        self._create_server_buttons()
-                    # Refresh hotkeys screen if it was built
-                    if hasattr(self, '_refresh_hotkeys_list'):
-                        self._refresh_hotkeys_list()
-                    
-                    messagebox.showinfo(
-                        "Restore Complete",
-                        "Selected data has been restored successfully!",
-                        parent=parent,
-                    )
-                except Exception as e:
-                    self.log_error("import_data.on_restore", e)
-                    raise
-            
-            # Open selective restore dialog
-            SelectiveRestoreDialog(parent, backup_data, on_restore)
-            
-        except Exception as e:
-            self.log_error("import_data", e)
-            messagebox.showerror(
-                "Import Error",
-                f"Failed to load file: {e}",
-                parent=parent,
-            )
+        self.data_manager.import_data(parent)
     # === ИМПОРТ ИЗ xNwN.ini ===
     def import_xnwn_ini(self):
         """Импортирует аккаунты, ключи и сервера из конфиг-файла xNwN.ini.
@@ -1210,20 +798,36 @@ class NWNManagerApp:
             self.log_error("test_open_wounds", e)
 
     def _apply_saved_hotkeys(self):
-        """Auto-register hotkeys from saved config on app startup."""
+        """Auto-register hotkeys from saved config on app startup or toggle."""
         try:
             print("[DEBUG] _apply_saved_hotkeys called")
-            hotkeys_cfg = getattr(self, 'hotkeys_config', {})
+            # Sync config with variable
+            if not hasattr(self, 'hotkeys_config'):
+                self.hotkeys_config = {}
+            
+            if hasattr(self, 'hotkeys_enabled_var'):
+                 self.hotkeys_config["enabled"] = self.hotkeys_enabled_var.get()
+
+            hotkeys_cfg = self.hotkeys_config
             print(f"[DEBUG] hotkeys_config: {hotkeys_cfg}")
             
+            # 1. Update master toggle key (always registered if manager is running)
+            master_key = hotkeys_cfg.get("master_toggle_key", "ALT+S")
+            if hasattr(self, "multi_hotkey_manager"):
+                self.multi_hotkey_manager.set_master_toggle(master_key)
+
             if not hotkeys_cfg.get("enabled", False):
-                print("[DEBUG] Hotkeys not enabled, skipping")
+                print("[DEBUG] Hotkeys not enabled, unregistering session keys")
+                if hasattr(self, "multi_hotkey_manager"):
+                    self.multi_hotkey_manager.unregister_session_keys()
                 return
             
             binds = hotkeys_cfg.get("binds", [])
             print(f"[DEBUG] Binds count: {len(binds)}")
             if not binds:
-                print("[DEBUG] No binds, skipping")
+                print("[DEBUG] No binds, skipping registration")
+                if hasattr(self, "multi_hotkey_manager"):
+                    self.multi_hotkey_manager.unregister_session_keys()
                 return
             
             from core.keybind_manager import HotkeyAction
@@ -1232,7 +836,23 @@ class NWNManagerApp:
             if actions:
                 count = self.multi_hotkey_manager.register_hotkeys(actions)
                 print(f"[DEBUG] Registered {count} hotkeys")
-                logging.info(f"Auto-registered {count} hotkeys on startup")
+                logging.info(f"Auto-registered {count} hotkeys")
+            else:
+                if hasattr(self, "multi_hotkey_manager"):
+                    self.multi_hotkey_manager.unregister_session_keys()
+            
+            # 4. Immediate UI updates
+            if hasattr(self, 'status_bar_comp') and self.status_bar_comp and not isinstance(self.status_bar_comp, (type(None), type(self._apply_saved_hotkeys))):
+                try:
+                    self.status_bar_comp.update()
+                except Exception as e:
+                    print(f"[DEBUG] Failed to update status bar: {e}")
+            
+            # Refresh hotkeys screen if active
+            current_screen_name = getattr(self, 'current_screen', '')
+            if current_screen_name == 'hotkeys' and hasattr(self, '_refresh_hotkeys_list'):
+                self._refresh_hotkeys_list()
+
         except Exception as e:
             print(f"[DEBUG] Error in _apply_saved_hotkeys: {e}")
             self.log_error("_apply_saved_hotkeys", e)
@@ -1274,7 +894,7 @@ class NWNManagerApp:
             # Unregister hotkeys
             print("[Auto] Unregistering hotkeys...")
             if hasattr(self, 'multi_hotkey_manager'):
-                self.multi_hotkey_manager.unregister_all()
+                self.multi_hotkey_manager.unregister_session_keys()
             
         except Exception as e:
             self.log_error("_on_sessions_ended", e)
@@ -1306,24 +926,16 @@ class NWNManagerApp:
         """Build main UI layout."""
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.create_ui()
-    
-        def _update_status_bar_loop(self):
-    
-            """Periodically update status bar information."""
-    
-            if hasattr(self, "ui_state_manager"):
-    
-                self.ui_state_manager._update_status_bar_loop()
-    
-        
-    
-        def _update_status_bar(self):
-    
-            """Update all status bar labels."""
-    
-            if hasattr(self, "ui_state_manager"):
-    
-                self.ui_state_manager._update_status_bar()
+
+    def _update_status_bar_loop(self):
+        """Periodically update status bar information."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_status_bar_loop()
+
+    def _update_status_bar(self):
+        """Update all status bar labels."""
+        if hasattr(self, "ui_state_manager"):
+            self.ui_state_manager._update_status_bar()
     
     
     
@@ -1945,69 +1557,80 @@ class NWNManagerApp:
     def close_game(self):
         if not self.current_profile:
             return
-        key = self.current_profile["cdKey"]
-        if key in self.sessions.sessions:
-            pid = self.sessions.sessions[key]
+        self.close_game_for_profile(self.current_profile)
 
-            def _safe_exit_wrapper():
-                try:
-                    # Retry up to 5 times
-                    for attempt in range(5):
-                        # Check if game window still exists
+    def close_game_for_profile(self, profile):
+        """Close a specific profile's game session."""
+        key = profile.get("cdKey")
+        if not key or key not in self.sessions.sessions:
+            return
+        pid = self.sessions.sessions[key]
+
+        def _safe_exit_wrapper():
+            try:
+                # Retry up to 5 times
+                for attempt in range(5):
+                    # Check if game window still exists
+                    if not get_hwnd_from_pid(pid):
+                        break
+
+                    # Determine speed multiplier
+                    # If exit_speed is 0.1 (default fast), allow it.
+                    # safe_exit_sequence handles defaults if None.
+                    current_speed = getattr(self, "exit_speed", None)
+                    
+                    safe_exit_sequence(
+                        pid,
+                        self.exit_x,
+                        self.exit_y,
+                        self.confirm_x,
+                        self.confirm_y,
+                        speed=current_speed,
+                        esc_count=getattr(self, "esc_count", None),
+                        clip_margin=getattr(self, "clip_margin", None),
+                    )
+
+                    # Wait up to 0.5 seconds for the window to close (speeded up)
+                    # Check every 0.1s
+                    for _ in range(5):
+                        time.sleep(0.1)
                         if not get_hwnd_from_pid(pid):
                             break
+                    
+                    # If window is gone, stop retrying
+                    if not get_hwnd_from_pid(pid):
+                        break
+                    
+                    # Otherwise continue to next attempt
+                    
+            except Exception as e:
+                self.log_error("close_game.safe_exit", e)
+            
+            # Ensure sessions cleaned and UI updated on main thread
+            try:
+                self.sessions.cleanup_dead()
+            except Exception:
+                logging.exception("Unhandled exception")
+            try:
+                self.root.after(0, self.update_launch_buttons)
+            except Exception:
+                logging.exception("Unhandled exception")
 
-                        # Determine speed multiplier
-                        # If exit_speed is 0.1 (default fast), allow it.
-                        # safe_exit_sequence handles defaults if None.
-                        current_speed = getattr(self, "exit_speed", None)
-                        
-                        safe_exit_sequence(
-                            pid,
-                            self.exit_x,
-                            self.exit_y,
-                            self.confirm_x,
-                            self.confirm_y,
-                            speed=current_speed,
-                            esc_count=getattr(self, "esc_count", None),
-                            clip_margin=getattr(self, "clip_margin", None),
-                        )
-
-                        # Wait up to 0.5 seconds for the window to close (speeded up)
-                        # Check every 0.1s
-                        for _ in range(5):
-                            time.sleep(0.1)
-                            if not get_hwnd_from_pid(pid):
-                                break
-                        
-                        # If window is gone, stop retrying
-                        if not get_hwnd_from_pid(pid):
-                            break
-                        
-                        # Otherwise continue to next attempt
-                        
-                except Exception as e:
-                    self.log_error("close_game.safe_exit", e)
-                
-                # Ensure sessions cleaned and UI updated on main thread
-                try:
-                    self.sessions.cleanup_dead()
-                except Exception:
-                    logging.exception("Unhandled exception")
-                try:
-                    self.root.after(0, self.update_launch_buttons)
-                except Exception:
-                    logging.exception("Unhandled exception")
-
-            threading.Thread(target=_safe_exit_wrapper, daemon=True).start()
+        threading.Thread(target=_safe_exit_wrapper, daemon=True).start()
         # остановим монитор при закрытии
         self.stop_log_monitor()
 
     def restart_game(self):
         if not self.current_profile:
             return
-        key = self.current_profile.get("cdKey")
-        self.close_game()
+        self.restart_game_for_profile(self.current_profile)
+
+    def restart_game_for_profile(self, profile):
+        """Restart a specific profile's game session."""
+        key = profile.get("cdKey")
+        if not key:
+            return
+        self.close_game_for_profile(profile)
         # Запускаем новый процесс, как только старый действительно выгружен,
         # вместо фиксированной задержки. Таймаут ~30 сек на случай зависания.
         def _wait_and_launch():
@@ -2026,10 +1649,11 @@ class NWNManagerApp:
                 return
 
             try:
-                self.root.after(0, self.launch_game)
+                self.root.after(0, lambda: self.launch_game(profile))
             except Exception:
                 logging.exception("Unhandled exception")
         threading.Thread(target=_wait_and_launch, daemon=True).start()
+
 
 # === SINGLE INSTANCE CHECK ===
 LOCK_FILE_NAME = "1609_manager.lock"
@@ -2039,7 +1663,7 @@ def _get_lock_file_path():
     return os.path.join(tempfile.gettempdir(), LOCK_FILE_NAME)
 
 def _is_process_running(pid: int) -> bool:
-    """Check if a process with given PID is running."""
+    """Check if a process with given PID is running and matches our application."""
     try:
         kernel32 = ctypes.windll.kernel32
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -2051,11 +1675,36 @@ def _is_process_running(pid: int) -> bool:
         
         exit_code = ctypes.wintypes.DWORD()
         result = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-        kernel32.CloseHandle(handle)
         
+        is_running = False
         if result and exit_code.value == STILL_ACTIVE:
-            return True
-        return False
+            # PID is active, now verify the process name to avoid collisions
+            # (e.g., if a system process reused the PID from a stale lock file)
+            try:
+                # Get the process image name
+                MAX_PATH = 260
+                buf = ctypes.create_unicode_buffer(MAX_PATH)
+                size = ctypes.wintypes.DWORD(MAX_PATH)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    executable_path = buf.value.lower()
+                    executable_name = os.path.basename(executable_path)
+                    
+                    # Check if the name matches common patterns for our app
+                    valid_names = {"python.exe", "pythonw.exe", "1609manager.exe", "1609_manager.exe"}
+                    if executable_name in valid_names:
+                        is_running = True
+                    else:
+                        # PID collision with unrelated process
+                        is_running = False
+                else:
+                    # Could not get name, fallback to True to be safe
+                    is_running = True
+            except Exception:
+                # Fallback on name check failure
+                is_running = True
+                
+        kernel32.CloseHandle(handle)
+        return is_running
     except Exception:
         return False
 

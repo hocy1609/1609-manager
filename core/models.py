@@ -178,6 +178,7 @@ class HotkeyBind:
 @dataclass
 class HotkeysConfig:
     enabled: bool = False
+    master_toggle_key: str = "ALT+S"
     binds: List[HotkeyBind] = field(default_factory=list)
 
     @classmethod
@@ -186,12 +187,14 @@ class HotkeysConfig:
         binds_raw = _clean_list(data.get("binds", []))
         return cls(
             enabled=_clean_bool(data.get("enabled", False)),
+            master_toggle_key=_clean_str(data.get("master_toggle_key", "ALT+S")) or "ALT+S",
             binds=[HotkeyBind.from_dict(b) for b in binds_raw],
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "enabled": self.enabled,
+            "master_toggle_key": self.master_toggle_key,
             "binds": [b.to_dict() for b in self.binds],
         }
 

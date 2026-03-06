@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Dict, List
 
 from utils.win_automation import (
-    user32, get_hwnd_from_pid, press_key_sequence, 
+    user32, kernel32, get_hwnd_from_pid, press_key_sequence, 
     right_click_and_send_sequence, press_key_with_modifiers, VK_MAP
 )
 
@@ -90,6 +90,11 @@ class MultiHotkeyManager:
         self._last_focus_check = False # True if NWN was focused
         self._thread_id: Optional[int] = None
         self._paused = False
+        self._master_toggle_id = 9999
+        self._master_toggle_registered = False
+        self._master_toggle_key = "ALT+S"
+        self._last_mt_key = (0, 0)
+        self._ready_event = threading.Event()
 
     def pause(self):
         """Temporarily unregister all hotkeys."""
@@ -126,16 +131,29 @@ class MultiHotkeyManager:
         
         if not self._running:
             self._start()
-        else:
-            # Signal thread to update
-            if self._thread_id:
-                user32.PostThreadMessageW(self._thread_id, WM_USER_UPDATE, 0, 0)
+        
+        # Ensure thread is ready before signaling
+        self._ready_event.wait(timeout=1.0)
+        if self._thread_id:
+            print(f"[MultiHotkeyManager] Signalling thread update. TID={self._thread_id}")
+            user32.PostThreadMessageW(self._thread_id, WM_USER_UPDATE, 0, 0)
         
         count = len(self._pending_actions)
         print(f"[MultiHotkeyManager] Configured {count} hotkeys (waiting for focus)")
         return count
+
+    def set_master_toggle(self, key_str: str):
+        """Set the master toggle hotkey."""
+        self._master_toggle_key = key_str
+        if not self._running:
+            self._start()
+        
+        # Ensure thread is ready before signaling
+        self._ready_event.wait(timeout=1.0)
+        if self._thread_id:
+            user32.PostThreadMessageW(self._thread_id, WM_USER_UPDATE, 0, 0)
     
-    def unregister_all(self):
+    def stop(self):
         """Stop manager and unregister all hooks."""
         self._running = False
         
@@ -164,7 +182,14 @@ class MultiHotkeyManager:
         self._thread_id = None
         self._are_keys_registered = False
         self._paused = False
+        self._ready_event.clear()
         print("[MultiHotkeyManager] Stopped")
+
+    def unregister_session_keys(self):
+        """Unregister game-specific hotkeys but keep manager running."""
+        if self._running and self._thread_id:
+             # wParam=2 tells _update_registration to force unregister
+             user32.PostThreadMessageW(self._thread_id, WM_USER_UPDATE, 2, 0)
     
     def _start(self):
         """Start the message loop and watcher threads."""
@@ -180,9 +205,13 @@ class MultiHotkeyManager:
     
     def _msg_loop(self):
         """Thread that runs the Windows Message Loop."""
-        self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        self._thread_id = kernel32.GetCurrentThreadId()
+        self._ready_event.set()
         print(f"[MultiHotkeyManager] Message loop started (TID={self._thread_id})")
         
+        # Initial registration
+        self._update_registration(force=True)
+
         # Create message structure
         msg = ctypes.wintypes.MSG()
         
@@ -191,17 +220,21 @@ class MultiHotkeyManager:
             # We use it to handle WM_HOTKEY and our custom WM_USER_UPDATE
             result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
             
-            if result == 0 or result == -1: # WM_QUIT or error
+            if result <= 0: # WM_QUIT (0) or error (-1)
                 break
             
             if msg.message == WM_HOTKEY:
-                self._handle_hotkey_press(msg.wParam)
+                if msg.wParam == self._master_toggle_id:
+                    self._handle_master_toggle()
+                else:
+                    self._handle_hotkey_press(msg.wParam)
                 
             elif msg.message == WM_USER_UPDATE:
                 # Signal to re-evaluate registration (e.g. config changed or focus changed)
-                # wParam: 1 = Force Register, 0 = Check Focus/Config
+                # wParam: 1 = Force Register, 0 = Check, 2 = Force Unregister
                 force_register = (msg.wParam == 1)
-                self._update_registration(force_register)
+                force_unregister = (msg.wParam == 2)
+                self._update_registration(force_register, force_unregister)
         
         # Cleanup on exit
         self._forced_unregister_all()
@@ -226,11 +259,19 @@ class MultiHotkeyManager:
                     # Ideally, we just wake it up.
                     user32.PostThreadMessageW(self._thread_id, WM_USER_UPDATE, 0, 0)
 
-    def _update_registration(self, force: bool = False):
+    def _update_registration(self, force: bool = False, force_unreg: bool = False):
         """
         Called within the message loop thread.
         Syncs registered hotkeys with current config and focus state.
         """
+        # 1. Update Master Toggle (always registered if running)
+        self._update_master_toggle_registration()
+
+        if force_unreg:
+            if self._are_keys_registered:
+                self._forced_unregister_all()
+            return
+
         # Smart pause if >1 session running and setting enabled
         session_count = len(getattr(self.app.sessions, "sessions", {}) or {})
         multi_session_pause = False
@@ -239,7 +280,11 @@ class MultiHotkeyManager:
             if settings and getattr(settings, "disable_hotkeys_on_multi_session", False):
                 multi_session_pause = True
 
-        should_be_registered = (self._is_nwn_focused() or force) and not self._paused and not multi_session_pause
+        global_enabled = True
+        if hasattr(self.app, "hotkeys_enabled_var"):
+             global_enabled = self.app.hotkeys_enabled_var.get()
+
+        should_be_registered = global_enabled and (self._is_nwn_focused() or force) and not self._paused and not multi_session_pause
         
         # If state implies change
         if should_be_registered and not self._are_keys_registered:
@@ -251,6 +296,61 @@ class MultiHotkeyManager:
             # We just re-register everything to be safe/sync
             self._forced_unregister_all()
             self._do_register_all()
+
+    def _update_master_toggle_registration(self):
+        """Ensure master toggle is registered with current key."""
+        if not self._running:
+            return
+
+        # Parse modifiers and key
+        mods = MOD_NOREPEAT
+        main_key = ""
+        parts = [p.strip().upper() for p in self._master_toggle_key.split("+")]
+        for p in parts:
+            if p in ["CTRL", "CONTROL"]: mods |= MOD_CONTROL
+            elif p == "SHIFT": mods |= MOD_SHIFT
+            elif p == "ALT": mods |= MOD_ALT
+            elif p == "WIN": mods |= MOD_WIN
+            else: main_key = p
+        
+        if not main_key:
+            return
+
+        vk = VK_MAP.get(main_key)
+        if not vk:
+            return
+
+        # Only re-register if changed
+        if hasattr(self, "_last_mt_key") and self._last_mt_key == (mods, vk) and self._master_toggle_registered:
+            return
+
+        # Unregister existing if any
+        if self._master_toggle_registered:
+            user32.UnregisterHotKey(None, self._master_toggle_id)
+            self._master_toggle_registered = False
+
+        res = user32.RegisterHotKey(None, self._master_toggle_id, mods, vk)
+        if res:
+            self._master_toggle_registered = True
+            self._last_mt_key = (mods, vk)
+            print(f"[MultiHotkeyManager] Master Toggle registered: {self._master_toggle_key}")
+        else:
+            err = kernel32.GetLastError()
+            print(f"[MultiHotkeyManager] FAILED to register Master Toggle {self._master_toggle_key}: error={err}")
+
+    def _handle_master_toggle(self):
+        """Callback for master toggle hotkey."""
+        try:
+            # Toggle the global enabled state in app - use root.after for thread safety
+            if hasattr(self.app, "hotkeys_enabled_var"):
+                def _do_toggle():
+                    current = self.app.hotkeys_enabled_var.get()
+                    self.app.hotkeys_enabled_var.set(not current)
+                    print(f"[MultiHotkeyManager] Master Toggle triggered: {'OFF' if current else 'ON'}")
+                
+                self.app.root.after(0, _do_toggle)
+        except Exception as e:
+            print(f"[MultiHotkeyManager] Error in handle_master_toggle: {e}")
 
     def _do_register_all(self):
         """Register all pending actions."""
@@ -278,7 +378,7 @@ class MultiHotkeyManager:
                 registered_count += 1
                 print(f"[MultiHotkeyManager] Registered: {key_upper} (id={hotkey_id})")
             else:
-                err = ctypes.get_last_error()
+                err = kernel32.GetLastError()
                 print(f"[MultiHotkeyManager] FAILED to register {key_upper}: error={err}")
         
         if registered_count > 0:
@@ -337,15 +437,9 @@ class MultiHotkeyManager:
                     except (ValueError, TypeError):
                         continue
                 
-                # Per-profile hotkey check: only trigger if profile has hotkey_on=True
-                if is_nwn_focused:
-                    if focused_profile and not focused_profile.get("hotkey_on", False):
-                        print(f"[MultiHotkeyManager] Hotkey IGNORED: profile '{focused_profile.name}' has hotkeys OFF")
-                        return
-                    elif not focused_profile:
-                        # Session found but no profile match (shouldn't happen)? 
-                        print("[MultiHotkeyManager] Hotkey IGNORED: No profile match for session")
-                        return
+                # Per-profile check removed to allow global hotkeys to function 
+                # as long as any NWN session is focused and master toggle is ON.
+                pass
 
             # Ensure hotkeys only fire when their profile is actually focused
             if not is_nwn_focused:

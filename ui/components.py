@@ -351,36 +351,24 @@ class StatusBar:
         """Toggle hotkeys enabled state on click."""
         try:
             print("[StatusBar] _toggle_hotkeys clicked")
-            # Try to toggle variable first
             var = getattr(self.app, 'hotkeys_enabled_var', None)
-            
             if var:
-                new_enabled = not var.get()
-                var.set(new_enabled)
-                print(f"[StatusBar] Hotkeys var set to {new_enabled}")
-                # Manual trigger logic since this var might not have a trace in all versions
-                self.app.hotkeys_config['enabled'] = new_enabled
-                if new_enabled:
-                    if hasattr(self.app, '_apply_saved_hotkeys'):
-                        self.app._apply_saved_hotkeys()
-                else:
-                    if hasattr(self.app, 'multi_hotkey_manager'):
-                        self.app.multi_hotkey_manager.unregister_all()
+                var.set(not var.get())
                 if hasattr(self.app, 'save_data'):
                     self.app.save_data()
             else:
-                # Fallback logic
-                hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
-                new_enabled = not hotkeys_cfg.get('enabled', False)
-                self.app.hotkeys_config['enabled'] = new_enabled
-                
-                if new_enabled:
+                # Fallback
+                hk_cfg = getattr(self.app, 'hotkeys_config', {})
+                new_val = not hk_cfg.get('enabled', False)
+                self.app.hotkeys_config['enabled'] = new_val
+                if new_val:
                     if hasattr(self.app, '_apply_saved_hotkeys'):
                         self.app._apply_saved_hotkeys()
                 else:
                     if hasattr(self.app, 'multi_hotkey_manager'):
-                        self.app.multi_hotkey_manager.unregister_all()
-                
+                        self.app.multi_hotkey_manager.unregister_session_keys()
+                    # Trigger immediate UI update after release
+                    self.update()
                 if hasattr(self.app, 'save_data'):
                     self.app.save_data()
         except Exception as e:
@@ -469,28 +457,33 @@ class StatusBar:
             hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
             hotkeys_enabled = hotkeys_cfg.get('enabled', False)
             hk_manager = getattr(self.app, 'multi_hotkey_manager', None)
-            hotkeys_active = hk_manager and hk_manager._running
             
-            # Check for pause (Manual or Smart Pause)
-            hk_paused = False
-            if hotkeys_active:
-                multi_session_disable = getattr(self.app.settings, "disable_hotkeys_on_multi_session", False)
-                if hk_manager._paused or (session_count > 1 and multi_session_disable):
-                    hk_paused = True
+            # Real-time check of actual execution state
+            is_active = hk_manager and hk_manager.is_active()
             
-            if hk_paused:
-                hotkeys_text = "Hotkeys: Paused"
-                hotkeys_fg = COLORS["warning"]
-            elif hotkeys_active:
+            # Check for various pause/waiting states
+            hk_waiting = hotkeys_enabled and not is_active
+            
+            if is_active:
                 binds_count = len([b for b in hotkeys_cfg.get('binds', []) if b.get('enabled', True)])
                 hotkeys_text = f"Hotkeys: On ({binds_count})"
                 hotkeys_fg = COLORS["success"]
-            elif hotkeys_enabled:
-                hotkeys_text = "Hotkeys: Waiting"
-                hotkeys_fg = COLORS["accent"]
+            elif hk_waiting:
+                # Determine WHY it's waiting
+                multi_session_disable = getattr(self.app.settings, "disable_hotkeys_on_multi_session", False)
+                if session_count > 1 and multi_session_disable:
+                    hotkeys_text = "Hotkeys: Paused (Multi)"
+                    hotkeys_fg = COLORS["warning"]
+                elif not self.app.multi_hotkey_manager._is_nwn_focused():
+                    hotkeys_text = "Hotkeys: Waiting (Focus)"
+                    hotkeys_fg = COLORS["accent"]
+                else:
+                    hotkeys_text = "Hotkeys: Waiting"
+                    hotkeys_fg = COLORS["accent"]
             else:
                 hotkeys_text = "Hotkeys: Off"
                 hotkeys_fg = COLORS["fg_dim"]
+            
             self.labels["hotkeys"].config(text=hotkeys_text, fg=hotkeys_fg)
             if hasattr(self, '_hotkeys_icon'):
                 self._hotkeys_icon.config(fg=hotkeys_fg)

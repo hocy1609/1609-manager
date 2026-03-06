@@ -47,6 +47,10 @@ class TestProfileManager(unittest.TestCase):
         # Mock size for .lb.size()
         self.mock_app.lb.size.return_value = 0
         
+        self.mock_data_manager = MagicMock()
+        self.mock_data_manager.app = self.mock_app
+        self.mock_app.data_manager = self.mock_data_manager
+        
         self.pm = ProfileManager(self.mock_app)
 
     def test_get_unique_categories_empty(self):

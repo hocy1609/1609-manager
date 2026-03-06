@@ -8,7 +8,7 @@ to make the codebase more maintainable and self-documenting.
 # === TIMING CONSTANTS (milliseconds) ===
 
 # How often to check for dead processes
-PROCESS_MONITOR_INTERVAL_MS = 1000
+PROCESS_MONITOR_INTERVAL_MS = 2000
 
 # Delay before checking paths silently on startup
 STARTUP_PATH_CHECK_DELAY_MS = 500

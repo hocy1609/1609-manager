@@ -6,14 +6,17 @@ cd /d "%~dp0"
 echo [1/3] Closing running instances...
 taskkill /F /IM 1609Manager.exe /T 2>nul >nul
 
-echo [2/3] Activating environment...
-call .venv\Scripts\activate.bat 2>nul
+echo [2/3] Checking environment...
+python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [!] Warning: Could not activate .venv. Using global environment.
+    echo [!] Warning: 'python' not found in PATH. Trying 'py' launcher...
+    set PYTHON_CMD=py
+) else (
+    set PYTHON_CMD=python
 )
 
 echo [3/3] Building executable...
-pyinstaller --noconfirm --clean --distpath=dist --workpath=build\onefile_build onefile_build.spec >nul 2>&1
+%PYTHON_CMD% -m PyInstaller --noconfirm --clean --distpath=dist --workpath=build\onefile_build onefile_build.spec >nul 2>&1
 
 if %errorlevel% equ 0 (
     echo.

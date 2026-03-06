@@ -54,18 +54,59 @@ def build_hotkeys_screen(app):
     
     # Enable toggle
     hotkeys_cfg = getattr(self, 'hotkeys_config', {"enabled": False, "binds": []})
-    self.hotkeys_enabled_var = tk.BooleanVar(value=hotkeys_cfg.get("enabled", False))
     
     tk.Label(header_right, text="Global:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left", padx=(0, 10))
     
-    def _on_hotkeys_toggle(*args):
-        # Apply changes
-        _apply_hotkeys()
-    
-    self.hotkeys_enabled_var.trace_add("write", _on_hotkeys_toggle)
-    
     hotkeys_toggle = ToggleSwitch(header_right, variable=self.hotkeys_enabled_var)
     hotkeys_toggle.pack(side="left")
+
+    # Master Toggle Section
+    master_toggle_frame = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
+    master_toggle_frame.pack(fill="x", padx=40, pady=(10, 5))
+
+    tk.Label(
+        master_toggle_frame,
+        text="Master Toggle Hotkey:",
+        bg=COLORS["bg_root"],
+        fg=COLORS["fg_dim"],
+        font=("Segoe UI", 10)
+    ).pack(side="left")
+
+    self.master_toggle_var = tk.StringVar(
+        value=hotkeys_cfg.get("master_toggle_key", "ALT+S")
+    )
+    
+    def _on_master_toggle_change(*args):
+        try:
+            val = self.master_toggle_var.get().upper().strip()
+            if val:
+                hotkeys_cfg["master_toggle_key"] = val
+                self.save_data()
+                if hasattr(self, "multi_hotkey_manager"):
+                    self.multi_hotkey_manager.set_master_toggle(val)
+        except Exception:
+            pass
+
+    master_toggle_entry = tk.Entry(
+        master_toggle_frame,
+        textvariable=self.master_toggle_var,
+        bg=COLORS["bg_input"],
+        fg=COLORS["fg_text"],
+        relief="flat",
+        width=15,
+        font=("Segoe UI", 10)
+    )
+    master_toggle_entry.pack(side="left", padx=10)
+    
+    self.master_toggle_var.trace_add("write", _on_master_toggle_change)
+
+    tk.Label(
+        master_toggle_frame,
+        text="(e.g. ALT+S, CTRL+F11)",
+        bg=COLORS["bg_root"],
+        fg=COLORS["fg_dim"],
+        font=("Segoe UI", 9, "italic")
+    ).pack(side="left")
 
     # Status label (below header)
     self.hotkeys_status_label = tk.Label(
@@ -163,9 +204,12 @@ def build_hotkeys_screen(app):
         # Always read live config from app (may have been replaced by restore)
         nonlocal hotkeys_cfg
         hotkeys_cfg = getattr(self, 'hotkeys_config', hotkeys_cfg)
-        # Sync enabled var
+        # Sync enabled var from config IF DIFFERENT (avoid trace loop)
         try:
-            self.hotkeys_enabled_var.set(hotkeys_cfg.get("enabled", False))
+            curr_val = self.hotkeys_enabled_var.get()
+            target_val = hotkeys_cfg.get("enabled", False)
+            if curr_val != target_val:
+                self.hotkeys_enabled_var.set(target_val)
         except Exception:
             pass
 
@@ -189,6 +233,36 @@ def build_hotkeys_screen(app):
         
         # Ensure scroll works after rebuild
         self.root.after(100, lambda: _bind_to_mousewheel(scrollable_frame))
+        
+        # Update the status label to match the current state
+        _update_status_label()
+    
+    def _update_status_label():
+        """Update the status label with current registration/enabled info."""
+        if not hasattr(self, 'hotkeys_status_label') or not self.hotkeys_status_label:
+            return
+            
+        enabled = self.hotkeys_enabled_var.get()
+        binds = hotkeys_cfg.get("binds", [])
+        
+        if not enabled:
+            status_text = "Disabled (Global) \uE71A" # E71A = Off/Blocked
+            status_fg = COLORS["fg_dim"]
+        elif not binds or not any(b.get('enabled', True) for b in binds):
+            status_text = "No active hotkeys"
+            status_fg = COLORS["warning"]
+        else:
+            # Check for live status if manager exists
+            hk_manager = getattr(self, 'multi_hotkey_manager', None)
+            if hk_manager and hk_manager.is_active():
+                count = len([b for b in binds if b.get('enabled', True)])
+                status_text = f"\uE73E Active: {count} hotkeys" # E73E = Success
+                status_fg = COLORS["success"]
+            else:
+                status_text = "Waiting for game focus..."
+                status_fg = COLORS["accent"]
+                
+        self.hotkeys_status_label.config(text=status_text, fg=status_fg)
     
     # Expose for external callers (e.g. restore callback)
     self._refresh_hotkeys_list = _refresh_hotkeys_list
@@ -296,12 +370,12 @@ def build_hotkeys_screen(app):
                                fg=COLORS["fg_text"], font=("Segoe UI", 9),
                                relief="solid", bd=1, padx=6, pady=4, wraplength=400)
                 lbl.pack()
-                seq_label._tooltip_win = tip
+                setattr(seq_label, "_tooltip_win", tip)
             def _hide_tooltip(e):
                 tip = getattr(seq_label, "_tooltip_win", None)
                 if tip:
                     tip.destroy()
-                    seq_label._tooltip_win = None
+                    setattr(seq_label, "_tooltip_win", None)
             seq_label.bind("<Enter>", _show_tooltip)
             seq_label.bind("<Leave>", _hide_tooltip)
         
@@ -316,33 +390,17 @@ def build_hotkeys_screen(app):
     def _save_hotkeys_config():
         """Save hotkeys config to app settings."""
         hotkeys_cfg["enabled"] = self.hotkeys_enabled_var.get()
+        hotkeys_cfg["master_toggle_key"] = self.master_toggle_var.get()
         self.hotkeys_config = hotkeys_cfg
         self.save_data()
     
     def _apply_hotkeys():
-        """Apply hotkeys - register or unregister based on enabled state."""
-        from core.keybind_manager import HotkeyAction
+        """Apply hotkeys - delegating to the central app method."""
+        if hasattr(self, '_apply_saved_hotkeys'):
+            self._apply_saved_hotkeys()
         
-        enabled = self.hotkeys_enabled_var.get()
-        binds = hotkeys_cfg.get("binds", [])
-        
-        if enabled and binds:
-            # Filter enabled individual binds
-            active_binds = [b for b in binds if b.get("enabled", True)]
-            actions = [HotkeyAction.from_dict(b) for b in active_binds]
-            
-            count = self.multi_hotkey_manager.register_hotkeys(actions)
-            self.hotkeys_status_label.config(
-                text=f"✓ Active: {count} hotkeys",
-                fg=COLORS["success"]
-            )
-        else:
-            self.multi_hotkey_manager.unregister_all()
-            status_text = "Disabled (Global)" if not enabled else "No active hotkeys"
-            self.hotkeys_status_label.config(
-                text=status_text,
-                fg=COLORS["fg_dim"]
-            )
+        # Immediate UI refresh for this screen's status label
+        _update_status_label()
         
         _save_hotkeys_config()
     
