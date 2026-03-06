@@ -172,9 +172,13 @@ class LogMonitor:
         else:
             header = "Найдено в логе!\n"
 
-        content = header + f"```\n{line}\n```"
+        content = "@here " + header + f"```\n{line}\n```"
 
-        payload = json.dumps({"username": "Spy Bot [БОТ]", "content": content}).encode("utf-8")
+        payload = json.dumps({
+            "username": "Spy Bot [БОТ]",
+            "content": content,
+            "allowed_mentions": {"parse": ["everyone"]},
+        }).encode("utf-8")
 
         # --- ИСПРАВЛЕНИЕ 403: ДОБАВЛЯЕМ USER-AGENT ---
         headers = {
