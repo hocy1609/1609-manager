@@ -15,6 +15,7 @@ from ui.screens import (
     build_settings_screen,
     build_log_monitor_screen,
     build_hotkeys_screen,
+    build_spy_screen,
 )
 
 
@@ -241,6 +242,7 @@ class UIStateManager:
         "hotkeys": "create_hotkeys_screen",
         "settings": "create_settings_screen",
         "log_monitor": "create_log_monitor_screen",
+        "spy": "create_spy_screen",
     }
 
     def create_ui(self):
@@ -449,4 +451,8 @@ class UIStateManager:
     def create_hotkeys_screen(self):
         """Hotkeys screen - delegated."""
         return build_hotkeys_screen(self.app)
+
+    def create_spy_screen(self):
+        """Spy screen - delegated."""
+        return build_spy_screen(self.app)
 

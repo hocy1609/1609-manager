@@ -68,7 +68,8 @@ class AddServerDialog(BaseDialog):
         name = self.name_var.get().strip()
         ip = self.ip_var.get().strip()
         if name and ip:
-            self.on_save({"name": name, "ip": ip})
+            from core.models import Server
+            self.on_save(Server(name=name, ip=ip))
             self.destroy()
         else:
             messagebox.showwarning(
@@ -83,7 +84,9 @@ class ServerManagementDialog(BaseDialog):
     
     def __init__(self, parent, servers: list, on_save):
         super().__init__(parent, "Manage Servers", 500, 400)
-        self.servers = [dict(s) for s in servers]  # Copy
+        # Deep copy the list of Server objects
+        from core.models import Server
+        self.servers = [Server(name=s.name, ip=s.ip) for s in servers]
         self.on_save = on_save
         
         content = tk.Frame(self, bg=COLORS["bg_root"])
@@ -195,7 +198,7 @@ class ServerManagementDialog(BaseDialog):
     def _refresh_list(self):
         self.lb.delete(0, tk.END)
         for s in self.servers:
-            self.lb.insert(tk.END, f"{s['name']} - {s['ip']}")
+            self.lb.insert(tk.END, f"{s.name} - {s.ip}")
     
     def _add_server(self):
         def on_add(data):
@@ -218,8 +221,8 @@ class ServerManagementDialog(BaseDialog):
         edit_win.transient(self)
         edit_win.resizable(False, False)
         
-        name_var = tk.StringVar(value=srv["name"])
-        ip_var = tk.StringVar(value=srv["ip"])
+        name_var = tk.StringVar(value=srv.name)
+        ip_var = tk.StringVar(value=srv.ip)
         
         frame = tk.Frame(edit_win, bg=COLORS["bg_root"])
         frame.pack(fill="both", expand=True, padx=20, pady=15)
@@ -234,7 +237,8 @@ class ServerManagementDialog(BaseDialog):
             name = name_var.get().strip()
             ip = ip_var.get().strip()
             if name and ip:
-                self.servers[idx] = {"name": name, "ip": ip}
+                from core.models import Server
+                self.servers[idx] = Server(name=name, ip=ip)
                 self._refresh_list()
                 edit_win.destroy()
         
@@ -256,7 +260,7 @@ class ServerManagementDialog(BaseDialog):
             return
         idx = sel[0]
         srv = self.servers[idx]
-        if messagebox.askyesno("Confirm", f"Delete server '{srv['name']}'?", parent=self):
+        if messagebox.askyesno("Confirm", f"Delete server '{srv.name}'?", parent=self):
             del self.servers[idx]
             self._refresh_list()
     

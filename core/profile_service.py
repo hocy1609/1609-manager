@@ -6,19 +6,6 @@ Separates data management (CRUD) from UI operations (rendering, dragging).
 from typing import List, Optional, Callable
 from core.models import Profile
 
-def _get_attr(obj, name: str, default=None):
-    """Get attribute from Profile dataclass or dict. Supports transition period."""
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-def _set_attr(obj, name: str, value):
-    """Set attribute on Profile dataclass or dict. Supports transition period."""
-    if isinstance(obj, dict):
-        obj[name] = value
-    else:
-        setattr(obj, name, value)
-
 class ProfileService:
     """Manages profile state, CRUD operations, and category logical organization."""
     
@@ -26,7 +13,7 @@ class ProfileService:
         self.data_manager = data_manager
 
     @property
-    def profiles(self):
+    def profiles(self) -> List[Profile]:
         return getattr(self.data_manager.app, 'profiles', [])
 
     def save_changes(self):
@@ -37,7 +24,7 @@ class ProfileService:
         """Return a sorted list of unique categories, with 'General' first."""
         cats = set()
         for p in self.profiles:
-            cats.add(_get_attr(p, "category", "General"))
+            cats.add(getattr(p, "category", "General"))
         
         res = sorted(list(cats))
         if "General" in res:
@@ -47,56 +34,50 @@ class ProfileService:
             res = ["General"]
         return res
 
-    def add_profile(self, data: dict):
-        p = {
-            "name": data.get("name", "New Profile"),
-            "desc": data.get("desc", ""),
-            "playerName": data.get("playerName", ""),
-            "cdKey": data.get("cdKey", ""),
-            "server": data.get("server", ""),
-            "password": data.get("password", ""),
-            "category": data.get("category", "General"),
-            "launchArgs": data.get("launchArgs", ""),
-            "is_crafter": bool(data.get("is_crafter", False)),
-            "server_group": getattr(self.data_manager.app, 'server_group', "siala"),
-        }
+    def add_profile(self, data: dict) -> Profile:
+        p = Profile(
+            name=data.get("name", "New Profile"),
+            playerName=data.get("playerName", ""),
+            cdKey=data.get("cdKey", ""),
+            server=data.get("server", ""),
+            category=data.get("category", "General") or "General",
+            launchArgs=data.get("launchArgs", ""),
+            server_group=getattr(self.data_manager.app, 'server_group', "siala"),
+        )
         self.profiles.append(p)
         self.save_changes()
         return p
 
-    def update_profile(self, current_profile: dict, new_data: dict):
+    def update_profile(self, current_profile: Profile, new_data: dict):
         if not current_profile: return
-        _set_attr(current_profile, "name", new_data.get("name", ""))
-        _set_attr(current_profile, "desc", new_data.get("desc", ""))
-        _set_attr(current_profile, "playerName", new_data.get("playerName", ""))
-        _set_attr(current_profile, "cdKey", new_data.get("cdKey", ""))
-        _set_attr(current_profile, "server", new_data.get("server", ""))
-        _set_attr(current_profile, "password", new_data.get("password", ""))
-        _set_attr(current_profile, "category", new_data.get("category", "General"))
-        _set_attr(current_profile, "launchArgs", new_data.get("launchArgs", ""))
-        _set_attr(current_profile, "is_crafter", bool(new_data.get("is_crafter", False)))
+        current_profile.name = new_data.get("name", current_profile.name)
+        current_profile.playerName = new_data.get("playerName", current_profile.playerName)
+        current_profile.cdKey = new_data.get("cdKey", current_profile.cdKey)
+        current_profile.server = new_data.get("server", current_profile.server)
+        current_profile.category = new_data.get("category", "General") or "General"
+        current_profile.launchArgs = new_data.get("launchArgs", current_profile.launchArgs)
         self.save_changes()
 
-    def delete_profile(self, profile):
+    def delete_profile(self, profile: Profile):
         if profile in self.profiles:
             self.profiles.remove(profile)
             self.save_changes()
 
-    def move_to_group(self, profile, target_group: str):
-        _set_attr(profile, "server_group", target_group)
+    def move_to_group(self, profile: Profile, target_group: str):
+        profile.server_group = target_group
         self.save_changes()
 
-    def set_hotkey_exclusive(self, prof):
+    def set_hotkey_exclusive(self, prof: Profile):
         for p in self.profiles:
-            _set_attr(p, "hotkey_on", False)
-        _set_attr(prof, "hotkey_on", True)
+            p.hotkey_on = False
+        prof.hotkey_on = True
         self.save_changes()
 
     def rename_category(self, old_name: str, new_name: str):
         changed = False
         for p in self.profiles:
-            if _get_attr(p, "category") == old_name:
-                _set_attr(p, "category", new_name)
+            if p.category == old_name:
+                p.category = new_name
                 changed = True
         if changed:
             self.save_changes()
@@ -104,10 +85,8 @@ class ProfileService:
     def move_category_to_group(self, category_name: str, current_group: str, target_group: str):
         count = 0
         for p in self.profiles:
-            p_cat = _get_attr(p, "category", "General")
-            p_group = _get_attr(p, "server_group", "siala")
-            if p_cat == category_name and p_group == current_group:
-                _set_attr(p, "server_group", target_group)
+            if p.category == category_name and p.server_group == current_group:
+                p.server_group = target_group
                 count += 1
         if count > 0:
             self.save_changes()

@@ -156,7 +156,7 @@ class DataManager:
 
         try:
             if self.app.servers:
-                srv_names = [s["name"] for s in self.app.servers]
+                srv_names = [s.name for s in self.app.servers]
                 last_srv = settings.last_server
                 if last_srv in srv_names:
                     self.app.server_var.set(last_srv)
@@ -171,12 +171,29 @@ class DataManager:
         lm_cfg = settings.log_monitor
         if lm_cfg.log_path == "" or "USER" in lm_cfg.log_path:
             lm_cfg.log_path = lm_default_path
+        
+        # Force log and spy off by default on startup
+        lm_cfg.enabled = False
+        lm_cfg.spy_enabled = False
+        
         self.app.log_monitor_state.config = lm_cfg.to_dict()
-        self.app.log_monitor_state.config.setdefault("open_wounds", {"enabled": False, "key": "F1"})
-        self.app.log_monitor_state.config.setdefault("keybind", {"enabled": False, "key": "F10"})
+        
+        # Sync unified variables if they exist
+        if hasattr(self.app, 'log_monitor_state'):
+            self.app.log_monitor_state.config = lm_cfg.to_dict()
+            if hasattr(self.app.log_monitor_state, 'enabled_var'):
+                self.app.log_monitor_state.enabled_var.set(False)
+            if hasattr(self.app.log_monitor_state, 'spy_enabled_var'):
+                self.app.log_monitor_state.spy_enabled_var.set(False)
+            if hasattr(self.app.log_monitor_state, 'auto_fog_enabled_var'):
+                fog_on = lm_cfg.auto_fog.enabled if hasattr(lm_cfg, 'auto_fog') else False
+                self.app.log_monitor_state.auto_fog_enabled_var.set(fog_on)
+            if hasattr(self.app.log_monitor_state, 'open_wounds_enabled_var'):
+                ow_on = lm_cfg.open_wounds.enabled if hasattr(lm_cfg, 'open_wounds') else False
+                self.app.log_monitor_state.open_wounds_enabled_var.set(ow_on)
 
-        # Load hotkeys config from top-level settings
-        self.app.hotkeys_config = settings.hotkeys.to_dict()
+        # Load hotkeys config directly from settings object
+        self.app.hotkeys_config = settings.hotkeys
         
         # Load sessions from settings
         self.app._settings_sessions = dict(settings.sessions)
@@ -349,7 +366,7 @@ class DataManager:
             def on_restore(selected_data: dict):
                 """Apply selected data categories."""
                 try:
-                    from core.models import Profile
+                    from core.models import Profile, Server, HotkeysConfig, LogMonitorConfig
                     
                     merge_mode = selected_data.pop("_merge", False)
                     
@@ -361,53 +378,70 @@ class DataManager:
                                 try:
                                     imported.append(Profile.from_dict(p))
                                 except Exception:
-                                    imported.append(p)
-                            else:
+                                    # Fallback to empty profile or skip? 
+                                    # Let's try to keep it as is if it's already an object
+                                    pass
+                            elif isinstance(p, Profile):
                                 imported.append(p)
                         
                         if merge_mode:
                             # Build set of existing profile identifiers
                             existing_ids = set()
                             for ep in self.app.profiles:
-                                name = ep.playerName if hasattr(ep, 'playerName') else ep.get("playerName", "")
-                                key = ep.cdKey if hasattr(ep, 'cdKey') else ep.get("cdKey", "")
-                                existing_ids.add((name, key))
+                                # Use attributes since we are on dataclasses now
+                                existing_ids.add((ep.playerName, ep.cdKey))
                             
-                            added = 0
                             for ip in imported:
-                                name = ip.playerName if hasattr(ip, 'playerName') else ip.get("playerName", "")
-                                key = ip.cdKey if hasattr(ip, 'cdKey') else ip.get("cdKey", "")
-                                if (name, key) not in existing_ids:
+                                if (ip.playerName, ip.cdKey) not in existing_ids:
                                     self.app.profiles.append(ip)
-                                    existing_ids.add((name, key))
-                                    added = added + 1
+                                    existing_ids.add((ip.playerName, ip.cdKey))
                         else:
                             self.app.profiles = imported
                     
                     # Restore Servers
                     if "servers" in selected_data:
-                        self.app.servers = selected_data["servers"]
-                        # Clean up invalid entries
+                        raw_servers = selected_data["servers"]
+                        # Convert dictionaries to Server objects
+                        imported_servers = []
+                        for s in raw_servers:
+                            if isinstance(s, dict):
+                                try:
+                                    imported_servers.append(Server.from_dict(s))
+                                except Exception:
+                                    pass
+                            elif isinstance(s, Server):
+                                imported_servers.append(s)
+                                
+                        # Filter and assign
                         self.app.servers = [
-                            s for s in self.app.servers
-                            if s.get("ip") and s.get("name") != "Без авто-подключения (Меню)"
+                            s for s in imported_servers
+                            if s.ip and s.name != "Без авто-подключения (Меню)"
                         ]
                     
                     # Restore Hotkeys
                     if "hotkeys" in selected_data:
-                        self.app.hotkeys_config = selected_data["hotkeys"]
-                        if self.app.hotkeys_config.get("enabled", False):
+                        raw_hk = selected_data["hotkeys"]
+                        if isinstance(raw_hk, dict):
+                            self.app.hotkeys_config = HotkeysConfig.from_dict(raw_hk)
+                        else:
+                            self.app.hotkeys_config = raw_hk
+                            
+                        if self.app.hotkeys_config.enabled:
                             self.app._apply_saved_hotkeys()
                         else:
                             if hasattr(self.app, 'multi_hotkey_manager'):
                                 self.app.multi_hotkey_manager.unregister_session_keys()
-                        # Refresh UI if the method is available (hotkeys screen was built)
+                        
                         if hasattr(self.app, '_refresh_hotkeys_list'):
                             self.app._refresh_hotkeys_list()
                     
                     # Restore Log Monitor
                     if "log_monitor" in selected_data:
-                        self.app.log_monitor_state.config = selected_data["log_monitor"]
+                        raw_lm = selected_data["log_monitor"]
+                        if isinstance(raw_lm, dict):
+                            self.app.log_monitor_state.config = LogMonitorConfig.from_dict(raw_lm)
+                        else:
+                            self.app.log_monitor_state.config = raw_lm
                     
                     # Restore App Settings
                     if "app_settings" in selected_data:

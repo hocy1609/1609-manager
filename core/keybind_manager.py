@@ -430,7 +430,7 @@ class MultiHotkeyManager:
                             is_nwn_focused = True
                             # Find profile by cdKey (k)
                             for prof in getattr(self.app, 'profiles', []):
-                                if prof.get("cdKey") == k:
+                                if prof.cdKey == k:
                                     focused_profile = prof
                                     break
                             break
@@ -487,8 +487,8 @@ class MultiHotkeyManager:
         try:
             sessions = getattr(self.app.sessions, 'sessions', None) or {}
             for prof in getattr(self.app, 'profiles', []):
-                if prof.get("hotkey_on", False):
-                    pid_str = sessions.get(prof.get("cdKey"))
+                if prof.hotkey_on:
+                    pid_str = sessions.get(prof.cdKey)
                     if pid_str:
                         return get_hwnd_from_pid(int(pid_str))
         except Exception:

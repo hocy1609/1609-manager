@@ -304,6 +304,38 @@ class StatusBar:
             _fw.bind("<Enter>", _fog_show_tip, add="+")
             _fw.bind("<Leave>", _fog_hide_tip, add="+")
 
+        # Separator before Spy
+        tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
+
+        # Spy status (clickable toggle) - E7B3 = Eye/Preview icon
+        spy_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        spy_frame.pack(side="left", padx=5)
+
+        self._spy_icon = tk.Label(
+            spy_frame,
+            text="\uE7B3",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe Fluent Icons", 10),
+            cursor="hand2"
+        )
+        self._spy_icon.pack(side="left")
+
+        self.labels["spy"] = tk.Label(
+            spy_frame,
+            text="Spy: Off",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 9),
+            cursor="hand2"
+        )
+        self.labels["spy"].pack(side="left", padx=(3, 0))
+
+        # Bind click to all parts
+        spy_frame.bind("<Button-1>", lambda e: self._toggle_spy())
+        self._spy_icon.bind("<Button-1>", lambda e: self._toggle_spy())
+        self.labels["spy"].bind("<Button-1>", lambda e: self._toggle_spy())
+
         # Separator before Slayer (now at end)
         tk.Frame(self.frame, bg=COLORS["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
         
@@ -357,20 +389,19 @@ class StatusBar:
                 if hasattr(self.app, 'save_data'):
                     self.app.save_data()
             else:
-                # Fallback
-                hk_cfg = getattr(self.app, 'hotkeys_config', {})
-                new_val = not hk_cfg.get('enabled', False)
-                self.app.hotkeys_config['enabled'] = new_val
-                if new_val:
-                    if hasattr(self.app, '_apply_saved_hotkeys'):
-                        self.app._apply_saved_hotkeys()
-                else:
-                    if hasattr(self.app, 'multi_hotkey_manager'):
-                        self.app.multi_hotkey_manager.unregister_session_keys()
-                    # Trigger immediate UI update after release
-                    self.update()
-                if hasattr(self.app, 'save_data'):
-                    self.app.save_data()
+                # Fallback to settings object
+                settings = getattr(self.app, 'settings', None)
+                if settings and settings.hotkeys:
+                    settings.hotkeys.enabled = not settings.hotkeys.enabled
+                    if settings.hotkeys.enabled:
+                        if hasattr(self.app, '_apply_saved_hotkeys'):
+                            self.app._apply_saved_hotkeys()
+                    else:
+                        if hasattr(self.app, 'multi_hotkey_manager'):
+                            self.app.multi_hotkey_manager.unregister_session_keys()
+                        self.update()
+                    if hasattr(self.app, 'save_data'):
+                        self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_hotkeys: {e}")
     
@@ -394,19 +425,19 @@ class StatusBar:
                 print(f"[StatusBar] Toggling Slayer var to {new_val}")
             else:
                 # Fallback if var not ready
-                ow_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
-                new_enabled = not ow_cfg.get("enabled", False)
-                self.app.log_monitor_state.config["open_wounds"]["enabled"] = new_enabled
-                if hasattr(self.app, 'log_monitor_manager'):
-                    self.app.log_monitor_manager.update_slayer_ui_state()
-                    self.app.log_monitor_manager._ensure_slayer_if_enabled()
-                if hasattr(self.app, 'save_data'):
-                    self.app.save_data()
+                settings = getattr(self.app, 'settings', None)
+                if settings and settings.log_monitor and settings.log_monitor.open_wounds:
+                    settings.log_monitor.open_wounds.enabled = not settings.log_monitor.open_wounds.enabled
+                    if hasattr(self.app, 'log_monitor_manager'):
+                        self.app.log_monitor_manager.update_slayer_ui_state()
+                        self.app.log_monitor_manager._ensure_slayer_if_enabled()
+                    if hasattr(self.app, 'save_data'):
+                        self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_slayer: {e}")
     
     def _toggle_auto_fog(self):
-        """Toggle Auto-Fog on click."""
+        """Toggle Auto-Fog on click. Also auto-enables log monitor if turning fog on."""
         try:
             # Retrieve variable
             var = getattr(self.app.log_monitor_state, 'auto_fog_enabled_var', None)
@@ -415,20 +446,41 @@ class StatusBar:
                 new_val = not var.get()
                 var.set(new_val)
                 print(f"[StatusBar] Toggling Auto-Fog var to {new_val}")
+                
+                # If enabling fog, auto-enable log monitor
+                if new_val:
+                    if hasattr(self.app, 'log_monitor_manager'):
+                        lm_cfg = self.app.settings.log_monitor
+                        if not lm_cfg.enabled:
+                            lm_cfg.enabled = True
+                            enabled_var = self.app.log_monitor_state.enabled_var
+                            if enabled_var:
+                                enabled_var.set(True)
+                            self.app.log_monitor_manager.ensure_log_monitor()
+                            self.app.log_monitor_manager.start_log_monitor()
+                            print("[StatusBar] Auto-enabled Log Monitor for Fog")
             else:
                 # Fallback
-                af_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
-                new_enabled = not af_cfg.get("enabled", False)
-                self.app.log_monitor_state.config["auto_fog"]["enabled"] = new_enabled
-                if hasattr(self.app, 'save_data'):
-                    self.app.save_data()
+                settings = getattr(self.app, 'settings', None)
+                if settings and settings.log_monitor and settings.log_monitor.auto_fog:
+                    settings.log_monitor.auto_fog.enabled = not settings.log_monitor.auto_fog.enabled
+                    if hasattr(self.app, 'save_data'):
+                        self.app.save_data()
         except Exception as e:
             print(f"[StatusBar] Error in _toggle_auto_fog: {e}")
+
+    def _toggle_spy(self):
+        """Toggle Spy (keyword tracking + Discord webhook) on click."""
+        try:
+            if hasattr(self.app, 'log_monitor_manager'):
+                self.app.log_monitor_manager.toggle_spy_enabled()
+        except Exception as e:
+            print(f"[StatusBar] Error in _toggle_spy: {e}")
 
     def update(self):
         """Update all status bar labels"""
         try:
-            # Sessions count (text only, icon is separate)
+            # Sessions count
             session_count = len(getattr(self.app.sessions, "sessions", {}) or {})
             sessions_text = f"Sessions: {session_count}"
             sessions_fg = COLORS["success"] if session_count > 0 else COLORS["fg_dim"]
@@ -436,9 +488,10 @@ class StatusBar:
             if hasattr(self, '_sessions_icon'):
                 self._sessions_icon.config(fg=sessions_fg)
             
-            # Log Monitor status (text only, icon is separate)
+            # Log Monitor status
+            log_monitor_cfg = self.app.settings.log_monitor
             log_on = self.app.log_monitor_state.monitor and self.app.log_monitor_state.monitor.is_running()
-            log_enabled = self.app.log_monitor_state.config.get("enabled", False)
+            log_enabled = log_monitor_cfg.enabled
             
             if log_on:
                 log_text = "Log: On"
@@ -453,19 +506,21 @@ class StatusBar:
             if hasattr(self, '_log_icon'):
                 self._log_icon.config(fg=log_fg)
             
-            # Hotkeys status (text only, icon is separate)
-            hotkeys_cfg = getattr(self.app, 'hotkeys_config', {})
-            hotkeys_enabled = hotkeys_cfg.get('enabled', False)
-            hk_manager = getattr(self.app, 'multi_hotkey_manager', None)
+            # Hotkeys status
+            hotkeys_cfg = self.app.settings.hotkeys
+            is_active = False
+            hotkeys_enabled = False
+            binds_count = 0
             
-            # Real-time check of actual execution state
-            is_active = hk_manager and hk_manager.is_active()
+            if hotkeys_cfg:
+                hotkeys_enabled = hotkeys_cfg.enabled
+                binds_count = len([b for b in hotkeys_cfg.binds if b.enabled])
+                hk_manager = getattr(self.app, 'multi_hotkey_manager', None)
+                is_active = hk_manager and hk_manager.is_active()
             
-            # Check for various pause/waiting states
             hk_waiting = hotkeys_enabled and not is_active
             
             if is_active:
-                binds_count = len([b for b in hotkeys_cfg.get('binds', []) if b.get('enabled', True)])
                 hotkeys_text = f"Hotkeys: On ({binds_count})"
                 hotkeys_fg = COLORS["success"]
             elif hk_waiting:
@@ -474,7 +529,7 @@ class StatusBar:
                 if session_count > 1 and multi_session_disable:
                     hotkeys_text = "Hotkeys: Paused (Multi)"
                     hotkeys_fg = COLORS["warning"]
-                elif not self.app.multi_hotkey_manager._is_nwn_focused():
+                elif self.app.multi_hotkey_manager and not self.app.multi_hotkey_manager._is_nwn_focused():
                     hotkeys_text = "Hotkeys: Waiting (Focus)"
                     hotkeys_fg = COLORS["accent"]
                 else:
@@ -488,9 +543,9 @@ class StatusBar:
             if hasattr(self, '_hotkeys_icon'):
                 self._hotkeys_icon.config(fg=hotkeys_fg)
             
-            # Auto-Fog status (text only, icon is separate)
-            auto_fog_cfg = self.app.log_monitor_state.config.get("auto_fog", {})
-            fog_enabled = auto_fog_cfg.get("enabled", False)
+            # Auto-Fog status
+            auto_fog_cfg = log_monitor_cfg.auto_fog
+            fog_enabled = auto_fog_cfg.enabled
             fog_active = fog_enabled and log_on
             fog_paused = fog_enabled and session_count > 1
             
@@ -510,21 +565,37 @@ class StatusBar:
             if hasattr(self, '_fog_icon'):
                 self._fog_icon.config(fg=fog_fg)
             
+            # Spy status
+            spy_enabled = log_monitor_cfg.spy_enabled
+            spy_active = spy_enabled and log_on
+            
+            if spy_active:
+                spy_text = "Spy: On"
+                spy_fg = COLORS["success"]
+            elif spy_enabled:
+                spy_text = "Spy: Waiting"
+                spy_fg = COLORS["accent"]
+            else:
+                spy_text = "Spy: Off"
+                spy_fg = COLORS["fg_dim"]
+            self.labels["spy"].config(text=spy_text, fg=spy_fg)
+            if hasattr(self, '_spy_icon'):
+                self._spy_icon.config(fg=spy_fg)
+            
             # Slayer visibility: only show for non-siala server groups
             current_group = getattr(self.app, 'server_group', 'siala')
             self.set_slayer_visibility(current_group != 'siala')
             
             # Slayer status
-
-            slayer_cfg = self.app.log_monitor_state.config.get("open_wounds", {})
-            slayer_enabled = slayer_cfg.get("enabled", False)
+            slayer_cfg = log_monitor_cfg.open_wounds
+            slayer_enabled = slayer_cfg.enabled
             
             # Check both main monitor and standalone slayer monitor
             slayer_monitor_running = self.app.log_monitor_state.slayer_monitor and self.app.log_monitor_state.slayer_monitor.is_running()
             slayer_active = slayer_enabled and (log_on or slayer_monitor_running)
             
             if slayer_active:
-                slayer_text = f"Slayer: On ({slayer_cfg.get('key', 'F1')})"
+                slayer_text = f"Slayer: On ({slayer_cfg.key})"
                 slayer_fg = COLORS["warning"]
             elif slayer_enabled:
                 slayer_text = "Slayer: Waiting"
@@ -540,9 +611,8 @@ class StatusBar:
             hits_text = f"({self.app.log_monitor_state.slayer_hit_count} hits)"
             hits_fg = COLORS["warning"] if self.app.log_monitor_state.slayer_hit_count > 0 else COLORS["fg_dim"]
             self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
-            self.labels["slayer_hits"].config(text=hits_text, fg=hits_fg)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[StatusBar] Update error: {e}")
 
     def set_slayer_visibility(self, visible: bool):
         """Show or hide the Slayer configuration section in status bar."""
@@ -573,7 +643,7 @@ class StatusBar:
             label.config(bg=COLORS["bg_panel"])
         
         # Update separate icon labels
-        for attr in ['_sessions_icon', '_log_icon', '_hotkeys_icon', '_fog_icon', '_slayer_icon']:
+        for attr in ['_sessions_icon', '_log_icon', '_hotkeys_icon', '_fog_icon', '_spy_icon', '_slayer_icon']:
             if hasattr(self, attr):
                 getattr(self, attr).config(bg=COLORS["bg_panel"])
         
@@ -600,7 +670,8 @@ class NavigationBar:
         # (icon, text, screen, tooltip)
         btn_defs = [
             ("\uE80F", "Home", "home", "Главный экран - управление аккаунтами и запуск игры"),
-            ("\uE9D2", "Log Monitor", "log_monitor", "Мониторинг лога игры"),
+            ("\uE9D2", "Log Monitor", "log_monitor", "Мониторинг лога игры (Auto-Fog, Slayer)"),
+            ("\uE7B3", "Spy", "spy", "Шпион - отслеживание ключевых слов и уведомления в Discord"),
             ("\uE765", "Hotkeys", "hotkeys", "Настройка горячих клавиш"),
             ("\uE713", "Settings", "settings", "Настройки приложения"),
         ]
@@ -681,6 +752,18 @@ class NavigationBar:
         except Exception:
             pass
     
+    def set_slayer_visibility(self, visible: bool):
+        """Show or hide the slayer hit counter in the status bar."""
+        try:
+            slayer_label = self.labels.get("slayer_hits")
+            if slayer_label:
+                if visible:
+                    slayer_label.pack(side="left", padx=10)
+                else:
+                    slayer_label.pack_forget()
+        except Exception:
+            pass
+
     def _update_style(self, screen):
         """Update button style based on active screen."""
         if screen == self.app.current_screen:

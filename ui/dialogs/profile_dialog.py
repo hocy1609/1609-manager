@@ -12,17 +12,18 @@ class EditDialog(BaseDialog):
         self.on_save = on_save
         self.saved_keys = saved_keys or []
 
-        self.name_var = tk.StringVar(value=profile.get("name", ""))
-        self.cat_var = tk.StringVar(
-            value=profile.get("category", "General")
+        self.name_var = tk.StringVar(value=getattr(profile, "name", ""))
+        self.category_var = tk.StringVar(
+            value=getattr(profile, "category", "General")
         )
-        self.key_var = tk.StringVar(value=profile.get("cdKey", ""))
-        self.player_var = tk.StringVar(
-            value=profile.get("playerName", "")
+        self.key_var = tk.StringVar(value=getattr(profile, "cdKey", ""))
+        self.player_name_var = tk.StringVar(
+            value=getattr(profile, "playerName", "")
         )
         self.server_var = tk.StringVar(
-            value=profile.get("server", "")
+            value=getattr(profile, "server", "")
         )
+
         self.server_list = server_list or []
 
         padding = 30
@@ -41,7 +42,7 @@ class EditDialog(BaseDialog):
 
         cat_cb = ttk.Combobox(
             content,
-            textvariable=self.cat_var,
+            textvariable=self.category_var,
             values=cats,
             font=("Segoe UI", 11),
         )
@@ -77,60 +78,67 @@ class EditDialog(BaseDialog):
             font=("Segoe UI", 10),
         ).pack(anchor="w")
         
-        # Saved keys dropdown
+        # Saved keys dropdown (Registry-aware)
         if self.saved_keys:
             key_select_frame = tk.Frame(content, bg=COLORS["bg_root"])
             key_select_frame.pack(fill="x", padx=padding, pady=(2, 5))
             
             tk.Label(
                 key_select_frame,
-                text="Use saved:",
+                text="Quick Select:",
                 bg=COLORS["bg_root"],
                 fg=COLORS["fg_dim"],
                 font=("Segoe UI", 9),
             ).pack(side="left")
             
-            key_names = [""] + [k.get("name", "Key") for k in self.saved_keys]
+            # Format: "KEY_VALUE (Used in: Player1, Player2)"
+            def format_label(k):
+                key_val = k.get("key", "")
+                profiles = k.get("profiles", [])
+                usage = f" (Used in: {', '.join(profiles)})" if profiles else " (Unused)"
+                return f"{key_val}{usage}"
+
+            labels = [""] + [format_label(k) for k in self.saved_keys]
             self.key_select_var = tk.StringVar(value="")
             
             def on_key_select(event=None):
-                selected = self.key_select_var.get()
+                selected_label = self.key_select_var.get()
+                if not selected_label: return
+                
+                # Find by matching the label
                 for k in self.saved_keys:
-                    if k.get("name") == selected:
+                    if format_label(k) == selected_label:
                         self.key_var.set(k.get("key", ""))
                         break
             
             key_combo = ttk.Combobox(
                 key_select_frame,
                 textvariable=self.key_select_var,
-                values=key_names,
+                values=labels,
                 font=("Segoe UI", 9),
-                width=20,
+                width=40,
+                state="readonly"
             )
-            key_combo.pack(side="left", padx=(5, 0))
+            key_combo.pack(side="left", padx=(5, 0), fill="x", expand=True)
             key_combo.bind("<<ComboboxSelected>>", on_key_select)
         
         # CD Key entry field
-        self.key_entry = self.create_field(
-            content, "", self.key_var, padding
+        self.create_field(content, "", self.key_var, padding)
+        
+        # Small inline hint for expected format
+        hint = tk.Label(
+            content,
+            text="Format: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
+            bg=COLORS["bg_root"],
+            fg=COLORS["fg_dim"],
+            font=("Segoe UI", 8),
         )
-        # Small inline hint and tooltip for expected format
-        try:
-            hint = tk.Label(
-                content,
-                text="Format: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-                bg=COLORS["bg_root"],
-                fg=COLORS["fg_dim"],
-                font=("Segoe UI", 8),
-            )
-            hint.pack(anchor="w", padx=padding, pady=(2, 6))
-            hint.pack(anchor="w", padx=padding, pady=(2, 6))
-        except Exception:
-            pass
+        hint.pack(anchor="w", padx=padding, pady=(2, 6))
+
         self.create_field(
             content,
             "Login Name (settings.tml):",
-            self.player_var,
+            self.player_name_var,
             padding,
         )
 
@@ -193,7 +201,7 @@ class EditDialog(BaseDialog):
             messagebox.showwarning("Validation Error", "Profile Name is required.", parent=self)
             return
 
-        cat = self.cat_var.get().strip()
+        cat = self.category_var.get().strip()
         if not cat:
             cat = "General"
             
@@ -206,7 +214,7 @@ class EditDialog(BaseDialog):
             "name": name,
             "category": cat,
             "cdKey": raw_key,
-            "playerName": self.player_var.get(),
+            "playerName": self.player_name_var.get(),
             "launchArgs": "",
             "server": self.server_var.get(),
         }

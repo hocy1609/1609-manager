@@ -283,16 +283,12 @@ def build_settings_screen(app):
     ModernButton(data_inner, COLORS["accent"], COLORS["accent_hover"], text="Open Backups", width=14, command=self.open_restore_dialog).pack(side="left", padx=(0, 8))
     
     def _open_key_mgr():
-        from ui.dialogs import KeyManagementDialog
-        def on_save(keys):
-            self.saved_keys[:] = keys
-            self.save_data()
-        try:
-            keys = getattr(self, "saved_keys", [])
-        except AttributeError:
-            self.saved_keys = []
-            keys = self.saved_keys
-        KeyManagementDialog(self.root, keys, on_save)
+        from ui.dialogs import KeyManagerDialog
+        # Use self.settings (the Settings dataclass instance)
+        if hasattr(self, "settings"):
+            KeyManagerDialog(self.root, self.settings)
+        else:
+            messagebox.showerror("Error", "Settings not found.")
         
     ModernButton(data_inner, COLORS["bg_panel"], COLORS["border"], text="Manage CD Keys", width=14, command=_open_key_mgr).pack(side="left")
 

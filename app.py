@@ -99,14 +99,19 @@ class LogMonitorState:
     slayer_monitor: LogMonitor | None = None
     slayer_hit_count: int = 0
     enabled_var: tk.BooleanVar | None = None
+    spy_enabled_var: tk.BooleanVar | None = None
     log_path_var: tk.StringVar | None = None
+    log_match_var: tk.StringVar | None = None
     webhooks_text: tk.Text | None = None
     keywords_text: tk.Text | None = None
     open_wounds_enabled_var: tk.BooleanVar | None = None
     open_wounds_key_var: tk.StringVar | None = None
+    auto_fog_enabled_var: tk.BooleanVar | None = None
     # Keybind state for numpad sequence
     keybind_enabled_var: tk.BooleanVar | None = None
     keybind_key_var: tk.StringVar | None = None
+    mention_here_var: tk.BooleanVar | None = None
+    mention_everyone_var: tk.BooleanVar | None = None
 
 
 class NWNManagerApp:
@@ -333,25 +338,24 @@ class NWNManagerApp:
         except Exception as e:
             self.log_error("start_slayer_if_enabled", e)
         self.monitor_processes()
-        self.check_server_status()
 
         self.root.after(STARTUP_PATH_CHECK_DELAY_MS, self.check_paths_silent)
         self.root.after(APPWINDOW_SETUP_DELAY_MS, self.set_appwindow)
         
-        # Initialize hotkey enabled variable
-        hotkeys_cfg = getattr(self, 'hotkeys_config', {})
-        self.hotkeys_enabled_var = tk.BooleanVar(value=hotkeys_cfg.get("enabled", False))
+        # Standardize on hotkeys_enabled_var
+        hotkeys_cfg = getattr(self, 'hotkeys_config', None)
+        is_on = False
+        if hotkeys_cfg:
+            if isinstance(hotkeys_cfg, dict):
+                is_on = hotkeys_cfg.get("enabled", False)
+            else:
+                is_on = getattr(hotkeys_cfg, "enabled", False)
+        self.hotkeys_enabled_var = tk.BooleanVar(value=is_on)
         
         def _on_hotkey_toggle_change(*args):
             self._apply_saved_hotkeys()
-            # If the hotkeys screen is active, it will need to refresh its labels.
-            # We can trigger a reload of the screen or just let it be.
-            # Actually, standardizing on self.hotkeys_enabled_var is enough.
         
         self.hotkeys_enabled_var.trace_add("write", _on_hotkey_toggle_change)
-
-        # Auto-register hotkeys if enabled in settings
-        self.root.after(500, self._apply_saved_hotkeys)
 
     @property
     def nav_buttons(self):
@@ -530,8 +534,9 @@ class NWNManagerApp:
             added_servers = 0
 
             # Existing sets for duplicate checks
-            existing_profile_keys = {(p.get('playerName'), p.get('cdKey')) for p in self.profiles}
-            existing_server_ips = {s.get('ip') for s in self.servers}
+            existing_profile_keys = {(p.playerName, p.cdKey) for p in self.profiles}
+            existing_server_ips = {s.ip for s in self.servers}
+
 
             for sec, kv in data_map.items():
                 lsec = sec.lower()
@@ -579,7 +584,7 @@ class NWNManagerApp:
             # If no server selected yet and servers present, select first
             if not self.server_var.get() and self.servers:
                 try:
-                    self.server_var.set(self.servers[0]['name'])
+                    self.server_var.set(self.servers[0].name)
                 except Exception:
                     logging.exception("Unhandled exception")
 
@@ -613,8 +618,8 @@ class NWNManagerApp:
                 f.write("# ---\n")
                 
                 for profile in self.profiles:
-                    name = profile.get("playerName", "")
-                    cdkey = profile.get("cdKey", "")
+                    name = getattr(profile, "playerName", "")
+                    cdkey = getattr(profile, "cdKey", "")
                     if name and cdkey:
                         f.write(f"{name}|{cdkey}\n")
             
@@ -646,7 +651,7 @@ class NWNManagerApp:
             with open(accounts_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             
-            existing_keys = {(p.get("playerName"), p.get("cdKey")) for p in self.profiles}
+            existing_keys = {(p.playerName, p.cdKey) for p in self.profiles}
             added = 0
             
             for line in lines:
@@ -666,13 +671,15 @@ class NWNManagerApp:
                 if key_tuple in existing_keys:
                     continue
                 
-                profile = {
-                    "name": name,
-                    "playerName": name,
-                    "cdKey": cdkey,
-                    "category": "Imported",
-                    "launchArgs": "",
-                }
+                # Use Profile class instead of dict
+                profile = Profile(
+                    name=name,
+                    playerName=name,
+                    cdKey=cdkey,
+                    category="Imported",
+                    launchArgs="",
+                    server_group=self.server_group if hasattr(self, 'server_group') else "siala"
+                )
                 self.profiles.append(profile)
                 existing_keys.add(key_tuple)
                 added += 1
@@ -801,28 +808,38 @@ class NWNManagerApp:
         """Auto-register hotkeys from saved config on app startup or toggle."""
         try:
             print("[DEBUG] _apply_saved_hotkeys called")
-            # Sync config with variable
-            if not hasattr(self, 'hotkeys_config'):
-                self.hotkeys_config = {}
             
-            if hasattr(self, 'hotkeys_enabled_var'):
-                 self.hotkeys_config["enabled"] = self.hotkeys_enabled_var.get()
+            # Sync config enabled state
+            if hasattr(self, 'settings') and hasattr(self.settings, 'hotkeys'):
+                hotkeys_cfg = self.settings.hotkeys
+            else:
+                hotkeys_cfg = getattr(self, 'hotkeys_config', None)
+                
+            if hotkeys_cfg is None:
+                return
 
-            hotkeys_cfg = self.hotkeys_config
-            print(f"[DEBUG] hotkeys_config: {hotkeys_cfg}")
+            is_enabled = self.hotkeys_enabled_var.get()
+            if isinstance(hotkeys_cfg, dict):
+                hotkeys_cfg["enabled"] = is_enabled
+                master_key = hotkeys_cfg.get("master_toggle_key", "ALT+S")
+                binds = hotkeys_cfg.get("binds", [])
+            else:
+                hotkeys_cfg.enabled = is_enabled
+                master_key = hotkeys_cfg.master_toggle_key
+                binds = hotkeys_cfg.binds
+
+            print(f"[DEBUG] hotkeys enabled: {is_enabled}")
             
-            # 1. Update master toggle key (always registered if manager is running)
-            master_key = hotkeys_cfg.get("master_toggle_key", "ALT+S")
+            # 1. Update master toggle key
             if hasattr(self, "multi_hotkey_manager"):
                 self.multi_hotkey_manager.set_master_toggle(master_key)
 
-            if not hotkeys_cfg.get("enabled", False):
+            if not is_enabled:
                 print("[DEBUG] Hotkeys not enabled, unregistering session keys")
                 if hasattr(self, "multi_hotkey_manager"):
                     self.multi_hotkey_manager.unregister_session_keys()
                 return
             
-            binds = hotkeys_cfg.get("binds", [])
             print(f"[DEBUG] Binds count: {len(binds)}")
             if not binds:
                 print("[DEBUG] No binds, skipping registration")
@@ -831,7 +848,23 @@ class NWNManagerApp:
                 return
             
             from core.keybind_manager import HotkeyAction
-            actions = [HotkeyAction.from_dict(b) for b in binds if b.get("enabled", True)]
+            actions = []
+            for b in binds:
+                # Handle both dict and object
+                if isinstance(b, dict):
+                    if b.get("enabled", True):
+                        actions.append(HotkeyAction.from_dict(b))
+                else:
+                    if b.enabled:
+                        # Map HotkeyBind to HotkeyAction
+                        actions.append(HotkeyAction(
+                            trigger=b.trigger,
+                            sequence=b.sequence,
+                            right_click=b.rightClick,
+                            comment=b.comment,
+                            enabled=b.enabled
+                        ))
+
             print(f"[DEBUG] Actions to register: {len(actions)}")
             if actions:
                 count = self.multi_hotkey_manager.register_hotkeys(actions)
@@ -842,11 +875,10 @@ class NWNManagerApp:
                     self.multi_hotkey_manager.unregister_session_keys()
             
             # 4. Immediate UI updates
-            if hasattr(self, 'status_bar_comp') and self.status_bar_comp and not isinstance(self.status_bar_comp, (type(None), type(self._apply_saved_hotkeys))):
+            if hasattr(self, 'status_bar_comp') and self.status_bar_comp:
                 try:
                     self.status_bar_comp.update()
-                except Exception as e:
-                    print(f"[DEBUG] Failed to update status bar: {e}")
+                except Exception: pass
             
             # Refresh hotkeys screen if active
             current_screen_name = getattr(self, 'current_screen', '')
@@ -1106,8 +1138,8 @@ class NWNManagerApp:
             new_name = dialog.result.strip()
             if new_name and new_name != old_name:
                 for p in self.profiles:
-                    if p.get("category") == old_name:
-                        p["category"] = new_name
+                    if getattr(p, "category", "General") == old_name:
+                        p.category = new_name
                 self.save_data()
                 self.refresh_list()
 
@@ -1153,7 +1185,7 @@ class NWNManagerApp:
     def is_current_running(self) -> bool:
         if not self.current_profile:
             return False
-        key = self.current_profile.get("cdKey")
+        key = self.current_profile.cdKey
         return key in self.sessions.sessions
 
     def detect_existing_session(self):
@@ -1207,7 +1239,7 @@ class NWNManagerApp:
 
                     # Find profile with same cdKey
                     for prof in self.profiles:
-                        if prof.get("cdKey") == current_key:
+                        if prof.cdKey == current_key:
                             # Add to sessions and refresh UI
                             try:
                                 self.sessions.add(current_key, pid)
@@ -1228,9 +1260,9 @@ class NWNManagerApp:
         # Если текущий профиль запущен, но он не контролирующий для своего cdKey, скрываем все элементы управления.
         if running:
             try:
-                cdkey = self.current_profile.get("cdKey")
+                cdkey = self.current_profile.cdKey
                 controller = self.controller_profile_by_cdkey.get(cdkey)
-                if controller and controller != self.current_profile.get("playerName"):
+                if controller and controller != self.current_profile.playerName:
                     # Не управляющий профиль: убрать и play, и ctrl_frame.
                     if hasattr(self, 'btn_play'):
                         try:
@@ -1483,7 +1515,7 @@ class NWNManagerApp:
 
         doc = self.doc_path_var.get()
         exe = self.exe_path_var.get()
-        key = target_profile["cdKey"]
+        key = target_profile.cdKey
 
         try:
             content = f"[NWN1]\nYourKey={key}\n"
@@ -1502,7 +1534,7 @@ class NWNManagerApp:
             if os.path.exists(tml_path):
                 os.chmod(tml_path, stat.S_IWRITE)
             robust_update_settings_tml(
-                tml_path, target_profile["playerName"]
+                tml_path, target_profile.playerName
             )
         except Exception as e:
             self.log_error("launch_game.file_update", e)
@@ -1519,15 +1551,16 @@ class NWNManagerApp:
         if self.use_server_var.get():
             # If we are launching a specific profile, we might want to use its saved server
             # instead of the currently selected one in the UI.
-            srv_val = target_profile.get("server", self.server_var.get()).strip()
+            srv_val = getattr(target_profile, "server", self.server_var.get()).strip()
             srv_ip = next(
-                (s["ip"] for s in self.servers if s["name"] == srv_val),
+                (s.ip for s in self.app.servers if s.name == srv_val) if hasattr(self, 'app') and hasattr(self.app, 'servers') else
+                (s.ip for s in self.servers if s.name == srv_val),
                 srv_val,
             )
             if srv_ip:
                 cmd.extend(["+connect", srv_ip])
 
-        args = target_profile.get("launchArgs", "").strip()
+        args = getattr(target_profile, "launchArgs", "").strip()
         if args:
             cmd.extend(args.split())
 
@@ -1539,7 +1572,7 @@ class NWNManagerApp:
             # Назначаем контролирующий профиль для ключа, если еще не назначен.
             try:
                 if key not in self.controller_profile_by_cdkey:
-                    self.controller_profile_by_cdkey[key] = target_profile.get("playerName", "")
+                    self.controller_profile_by_cdkey[key] = target_profile.playerName
             except Exception:
                 logging.exception("Unhandled exception")
             
@@ -1547,8 +1580,8 @@ class NWNManagerApp:
             self.root.after(0, self.refresh_list)
             self.root.after(0, self.update_launch_buttons)
             
-            # можно включать лог-монитор вместе с игрой
-            self.root.after(0, self.start_log_monitor)
+            # Note: Log monitor activation is handled by _on_sessions_started 
+            # based on user config, we do not force it here.
         except Exception as e:
             self.log_error("launch_game.Popen", e)
             if not profile:
@@ -1561,7 +1594,7 @@ class NWNManagerApp:
 
     def close_game_for_profile(self, profile):
         """Close a specific profile's game session."""
-        key = profile.get("cdKey")
+        key = getattr(profile, "cdKey", None)
         if not key or key not in self.sessions.sessions:
             return
         pid = self.sessions.sessions[key]
@@ -1627,7 +1660,7 @@ class NWNManagerApp:
 
     def restart_game_for_profile(self, profile):
         """Restart a specific profile's game session."""
-        key = profile.get("cdKey")
+        key = getattr(profile, "cdKey", None)
         if not key:
             return
         self.close_game_for_profile(profile)
@@ -1649,7 +1682,7 @@ class NWNManagerApp:
                 return
 
             try:
-                self.root.after(0, lambda: self.launch_game(profile))
+                self.root.after(0, lambda: self.smart_launch_profiles([profile]))
             except Exception:
                 logging.exception("Unhandled exception")
         threading.Thread(target=_wait_and_launch, daemon=True).start()

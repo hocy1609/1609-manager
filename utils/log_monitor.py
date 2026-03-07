@@ -22,6 +22,9 @@ class LogMonitor:
         on_match=None,
         on_line=None,
         slayer_mode: bool = False,
+        spy_enabled: bool = False,
+        mention_here: bool = False,
+        mention_everyone: bool = False,
     ):
         self.log_path = log_path
         self.keywords = keywords or []
@@ -30,6 +33,9 @@ class LogMonitor:
         self.on_match = on_match
         self.on_line = on_line  # Called for every new line
         self.slayer_mode = slayer_mode  # High-priority fast polling for Open Wounds
+        self.spy_enabled = spy_enabled  # Keyword tracking + Discord webhook sending
+        self.mention_here = mention_here
+        self.mention_everyone = mention_everyone
 
         self._thread: threading.Thread | None = None
         self._running = False
@@ -60,6 +66,10 @@ class LogMonitor:
         """Enable/disable high-priority slayer mode for instant Open Wounds response."""
         self.slayer_mode = enabled
 
+    def set_spy_enabled(self, enabled: bool):
+        """Enable/disable spy mode (keyword matching + Discord webhook sending)."""
+        self.spy_enabled = enabled
+
     def stop(self):
         self._running = False
 
@@ -71,6 +81,8 @@ class LogMonitor:
         log_path: str | None = None,
         keywords: list[str] | None = None,
         webhooks: list[str] | None = None,
+        mention_here: bool | None = None,
+        mention_everyone: bool | None = None,
     ):
         """
         Обновить настройки «на лету» (путь, ключевые слова, вебхуки).
@@ -83,6 +95,10 @@ class LogMonitor:
             self.keywords = keywords
         if webhooks is not None:
             self.webhooks = webhooks
+        if mention_here is not None:
+            self.mention_here = mention_here
+        if mention_everyone is not None:
+            self.mention_everyone = mention_everyone
 
     # --- основная логика чтения файла ---
 
@@ -115,10 +131,26 @@ class LogMonitor:
                     f.seek(self._position)
 
                     # Читаем новые строки
-                    for line in f:
+                    while True:
+                        line = f.readline()
+                        if not line:
+                            break
+                        if not line.endswith('\n'):
+                            # Incomplete line yet, revert position and wait
+                            f.seek(self._position)
+                            break
+                        
+                        try:
+                            # Debug log for tracing keywords
+                            from datetime import datetime
+                            with open("1609_manager_monitor_debug.log", "a", encoding="utf-8") as d:
+                                d.write(f"[{datetime.now()}] READ: {line.rstrip(chr(10))}\n")
+                                d.write(f"  KEYWORDS: {self.keywords}\n")
+                        except Exception:
+                            pass
+                            
                         self._handle_line(line.rstrip("\n"))
-
-                    self._position = f.tell()
+                        self._position = f.tell()
             except Exception as e:
                 print(f"LogMonitor Error: {e}")
                 if self.on_error:
@@ -130,12 +162,15 @@ class LogMonitor:
     def _handle_line(self, line: str):
         if not line:
             return
-        # Call on_line for every line (used for Open Wounds detection)
+        # Call on_line for every line (used for Open Wounds / Auto-Fog detection)
         if self.on_line:
             try:
                 self.on_line(line)
             except Exception:
                 pass
+        # Keyword matching + Discord sending only when spy is enabled
+        if not self.spy_enabled:
+            return
         matched = None
         line_lower = line.lower()
         for k in self.keywords:
@@ -165,14 +200,14 @@ class LogMonitor:
         if not self.webhooks:
             return
 
-        # Формируем читаемый шаблон сообщения для Discord.
-        # Если известно ключевое слово — делаем его жирным перед текстом.
-        if keyword:
-            header = f"**{keyword}** найдено в логе!\n"
-        else:
-            header = "Найдено в логе!\n"
-
-        content = "@here " + header + f"```\n{line}\n```"
+        # Prepare message content once
+        header = f"**{keyword}** найдено в логе!\n" if keyword else "Найдено в логе!\n"
+        mentions = []
+        if self.mention_everyone: mentions.append("@everyone")
+        elif self.mention_here: mentions.append("@here")
+        
+        mention_str = " ".join(mentions) + " " if mentions else ""
+        content = mention_str + header + f"```\n{line}\n```"
 
         payload = json.dumps({
             "username": "Spy Bot [БОТ]",
@@ -180,45 +215,26 @@ class LogMonitor:
             "allowed_mentions": {"parse": ["everyone"]},
         }).encode("utf-8")
 
-        # --- ИСПРАВЛЕНИЕ 403: ДОБАВЛЯЕМ USER-AGENT ---
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            ),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
-        # ---------------------------------------------
 
-        for url in self.webhooks:
-            if not url:
-                continue
+        for wh in self.webhooks:
+            # Handle both old format (string) and new format (dict)
+            if isinstance(wh, dict):
+                if not wh.get("enabled", True): continue
+                url = wh.get("url")
+            else:
+                url = wh
 
-            # Передаём headers в запрос
-            req = request.Request(url, data=payload, headers=headers, method="POST")
+            if not url or not url.startswith("http"): continue
+
             try:
+                req = request.Request(url, data=payload, headers=headers, method="POST")
                 with request.urlopen(req, timeout=5):
                     pass
-            except error.HTTPError as e:
-                # Попробуем прочитать тело ответа для диагностики (например, при 403/404/429)
-                body = None
-                try:
-                    body_bytes = e.read()
-                    if body_bytes:
-                        body = body_bytes.decode("utf-8", errors="ignore")
-                except Exception:
-                    body = None
-                if self.on_error:
-                    details = f"HTTPError {e.code} {e.reason}"
-                    if body:
-                        # Усечём тело, чтобы не раздувать лог
-                        snippet = body if len(body) <= 500 else body[:500] + "..."
-                        details += f" | body: {snippet}"
-                    self.on_error(Exception(details))
-            except error.URLError as e:
-                if self.on_error:
-                    self.on_error(Exception(f"URLError: {e.reason}"))
             except Exception as e:
-                # Прочие ошибки сети/сокета/таймаута
                 if self.on_error:
-                    self.on_error(e)
+                    name = wh.get('name', 'Webhook') if isinstance(wh, dict) else 'Webhook'
+                    self.on_error(Exception(f"[{name}] Send failed: {e}"))

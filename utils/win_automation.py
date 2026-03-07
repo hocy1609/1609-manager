@@ -200,6 +200,136 @@ def get_hwnd_from_pid(pid: int):
     return hwnd_found
 
 
+def _get_exit_params(speed: float | None, esc_count: int | None):
+    """Helper to determine automation parameters from args or environment."""
+    try:
+        _speed = float(speed) if speed is not None else float(os.environ.get("NWN_EXIT_SPEED", "0.4"))
+        if _speed <= 0: _speed = 0.4
+    except Exception:
+        _speed = 0.4
+        
+    try:
+        _esc_count = int(esc_count) if esc_count is not None else int(os.environ.get("NWN_ESC_COUNT", "6"))
+        if _esc_count <= 0: _esc_count = 6
+    except Exception:
+        _esc_count = 6
+        
+    return {"speed": _speed, "esc_count": _esc_count}
+
+
+def _prepare_window_for_automation(pid: int, hwnd: int, speed: float):
+    """Restore window, disable sticky keys, and ensure focus."""
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+
+    # Disable sticky keys temporarily (0x2001 = SPI_SETSTICKYKEYS)
+    user32.SystemParametersInfoW(0x2001, 0, 0, 0)
+
+    # Alt tap to help focus
+    user32.keybd_event(VK_MENU, 0, 0, 0)
+    time.sleep(0.03 * speed)
+    user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+    for _ in range(6):
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.05 * speed)
+        if user32.GetForegroundWindow() == hwnd:
+            break
+
+
+def _setup_input_blocking(hwnd: int, abs_coords: list, margin: int | None):
+    """Attempt to block user input and/or clip cursor."""
+    state = {
+        "blocked": False,
+        "clipped": False,
+        "original_clip": RECT(),
+        "had_original": False
+    }
+    
+    # 1. Try BlockInput
+    if hasattr(user32, "BlockInput"):
+        try:
+            if user32.BlockInput(True):
+                state["blocked"] = True
+                time.sleep(0.02)
+        except Exception:
+            pass
+
+    # 2. Fallback: ClipCursor
+    if not state["blocked"]:
+        try:
+            if user32.GetClipCursor(ctypes.byref(state["original_clip"])):
+                state["had_original"] = True
+            
+            cur = POINT(0, 0)
+            user32.GetCursorPos(ctypes.byref(cur))
+            
+            m = margin if margin is not None else 48
+            all_x = [cur.x] + [c[0] for c in abs_coords]
+            all_y = [cur.y] + [c[1] for c in abs_coords]
+            
+            left, top = min(all_x) - m, min(all_y) - m
+            right, bottom = max(all_x) + m, max(all_y) + m
+            
+            # Clamp to screen
+            sx, sy = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            clip_rect = RECT(max(0, int(left)), max(0, int(top)), min(sx, int(right)), min(sy, int(bottom)))
+            
+            if user32.ClipCursor(ctypes.byref(clip_rect)):
+                state["clipped"] = True
+        except Exception:
+            pass
+            
+    return state
+
+
+def _send_one_esc(speed: float):
+    """Send a single ESC press with scan code support."""
+    try:
+        scan = user32.MapVirtualKeyW(VK_ESCAPE, 0)
+        _info = ctypes.c_ulonglong(0)
+        ki_down = KEYBDINPUT(wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE, time=0, dwExtraInfo=_info)
+        ki_up = KEYBDINPUT(wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=_info)
+        
+        user32.SendInput(1, ctypes.byref(INPUT_STRUCT(type=INPUT_KEYBOARD, u=INPUT_UNION(ki=ki_down))), ctypes.sizeof(INPUT_STRUCT))
+        time.sleep(0.02 * speed)
+        user32.SendInput(1, ctypes.byref(INPUT_STRUCT(type=INPUT_KEYBOARD, u=INPUT_UNION(ki=ki_up))), ctypes.sizeof(INPUT_STRUCT))
+    except Exception:
+        user32.keybd_event(VK_ESCAPE, 0, 0, 0)
+        time.sleep(0.03 * speed)
+        user32.keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0)
+
+
+def _perform_click(x: int, y: int, speed: float, hwnd: int = None):
+    """Click at coordinates using SendInput with fallback to PostMessage."""
+    user32.SetCursorPos(x, y)
+    time.sleep(0.12 * speed)
+    
+    # 1. SendInput click
+    try:
+        _info = ctypes.c_ulonglong(0)
+        mi_down = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=_info)
+        mi_up = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=_info)
+        user32.SendInput(1, ctypes.byref(INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_down))), ctypes.sizeof(INPUT_STRUCT))
+        time.sleep(0.06 * speed)
+        user32.SendInput(1, ctypes.byref(INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_up))), ctypes.sizeof(INPUT_STRUCT))
+    except Exception:
+        pass
+
+    # 2. PostMessage fallback if HWND provided
+    if hwnd:
+        try:
+            pt = POINT(x, y)
+            user32.ScreenToClient(hwnd, ctypes.byref(pt))
+            lparam = ((pt.y & 0xFFFF) << 16) | (pt.x & 0xFFFF)
+            user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, lparam)
+            user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+            time.sleep(0.03 * speed)
+            user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
+        except Exception:
+            pass
+
+
 def safe_exit_sequence(
     pid: int,
     rel_exit_x: int,
@@ -210,365 +340,59 @@ def safe_exit_sequence(
     esc_count: int | None = None,
     clip_margin: int | None = None,
 ) -> None:
-    """Автоматическая последовательность выхода из игры с кликами по координатам."""
+    """Refactored automation sequence to safely exit the game."""
     import subprocess
+    
+    hwnd = get_hwnd_from_pid(pid)
+    if not hwnd:
+        try: subprocess.run(f"taskkill /f /pid {pid}", shell=True)
+        except Exception: pass
+        return
+
+    params = _get_exit_params(speed, esc_count)
+    _speed = params["speed"]
+
+    # Calculate absolute coordinates
+    pt = POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    abs_exit = (pt.x + rel_exit_x, pt.y + rel_exit_y)
+    abs_conf = (pt.x + rel_confirm_x, pt.y + rel_confirm_y)
+
+    _prepare_window_for_automation(pid, hwnd, _speed)
+    blocking = _setup_input_blocking(hwnd, [abs_exit, abs_conf], clip_margin)
 
     try:
-        hwnd = get_hwnd_from_pid(pid)
-        if not hwnd:
-            subprocess.run(f"taskkill /f /pid {pid}", shell=True)
-            return
-
-        if user32.IsIconic(hwnd):
-            user32.ShowWindow(hwnd, SW_RESTORE)
-
-        # Отключаем липкие клавиши
-        user32.SystemParametersInfoW(0x2001, 0, 0, 0)
-
-        # Alt для фокуса
-        # Allow adjusting sleep timings via NWN_EXIT_SPEED env var (multiplier, e.g. 0.5 for faster)
-        # Determine speed multiplier: explicit arg -> env var -> default
-        try:
-            if speed is not None:
-                _speed = float(speed)
-            else:
-                _speed = float(os.environ.get("NWN_EXIT_SPEED", "0.4"))
-            if _speed <= 0:
-                _speed = 0.4
-        except Exception:
-            _speed = 0.4
-
-        user32.keybd_event(VK_MENU, 0, 0, 0)
-        time.sleep(0.03 * _speed)
-        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-
-        user32.SetForegroundWindow(hwnd)
+        # 1. Send ESC sequence
+        for _ in range(max(1, params["esc_count"])):
+            _send_one_esc(_speed)
+            time.sleep(0.02 * _speed)
         time.sleep(0.25 * _speed)
 
-        # Try to block user input (mouse & keyboard) for the duration of the automation
-        _blocked = False
-        _cursor_clipped = False
-        _original_clip = RECT()
-        _had_original_clip = False
-        try:
-            # BlockInput blocks mouse and keyboard input system-wide while True
-            # It may require elevated privileges on some systems; check return value.
-            if hasattr(user32, "BlockInput"):
-                try:
-                    ret = user32.BlockInput(True)
-                    # ret == 0 -> failed; non-zero -> success
-                    if ret:
-                        _blocked = True
-                        # give system a moment to apply the block
-                        time.sleep(0.02)
-                    else:
-                        _blocked = False
-                except Exception:
-                    _blocked = False
-
-            # If BlockInput failed or is unavailable, we'll attempt a ClipCursor fallback
-            # but defer setting the clipping rectangle until we know the absolute
-            # screen coordinates we need to click (so the automation can still
-            # move the cursor between those points).
-            # The actual ClipCursor attempt is performed later after computing
-            # absolute click positions.
-            if not _blocked:
-                try:
-                    try:
-                        res = user32.GetClipCursor(ctypes.byref(_original_clip))
-                        if res:
-                            _had_original_clip = True
-                    except Exception:
-                        _had_original_clip = False
-                except Exception:
-                    _had_original_clip = False
-        except Exception:
-            _blocked = False
-            _cursor_clipped = False
-
-        pt = POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        origin_x = pt.x
-        origin_y = pt.y
-
-        abs_exit_x = origin_x + rel_exit_x
-        abs_exit_y = origin_y + rel_exit_y
-        abs_conf_x = origin_x + rel_confirm_x
-        abs_conf_y = origin_y + rel_confirm_y
-
-        # If BlockInput failed earlier, try ClipCursor now but include both
-        # the exit and confirm coordinates (and current cursor) in the clip
-        # rectangle so the automation can still move and click between them.
-        try:
-            if not _blocked:
-                try:
-                    cur = POINT(0, 0)
-                    try:
-                        user32.GetCursorPos(ctypes.byref(cur))
-                    except Exception:
-                        cur.x, cur.y = origin_x, origin_y
-
-                    # margin: explicit arg -> default 48
-                    try:
-                        margin = int(clip_margin) if clip_margin is not None else 48
-                    except Exception:
-                        margin = 48
-                    left = min(cur.x, abs_exit_x, abs_conf_x) - margin
-                    top = min(cur.y, abs_exit_y, abs_conf_y) - margin
-                    right = max(cur.x, abs_exit_x, abs_conf_x) + margin
-                    bottom = max(cur.y, abs_exit_y, abs_conf_y) + margin
-
-                    # Clamp to reasonable screen bounds to avoid invalid rects
-                    try:
-                        sx = user32.GetSystemMetrics(0)
-                        sy = user32.GetSystemMetrics(1)
-                        if left < 0:
-                            left = 0
-                        if top < 0:
-                            top = 0
-                        if right > sx:
-                            right = sx
-                        if bottom > sy:
-                            bottom = sy
-                    except Exception:
-                        pass
-
-                    clip_rect = RECT(int(left), int(top), int(right), int(bottom))
-                    try:
-                        if user32.ClipCursor(ctypes.byref(clip_rect)):
-                            _cursor_clipped = True
-                    except Exception:
-                        _cursor_clipped = False
-                except Exception:
-                    _cursor_clipped = False
-        except Exception:
-            _cursor_clipped = False
-
-        # Prefer using SendInput, but if game doesn't register synthetic
-        # inputs, fall back to the older keybd_event (which is often
-        # better recognized by some games). Use discrete down/up pairs
-        # (no holding) for each ESC press.
-        # Determine ESC count: explicit arg -> env var -> default
-        try:
-            if esc_count is not None:
-                _esc_count = int(esc_count)
-            else:
-                _esc_count = int(os.environ.get("NWN_ESC_COUNT", "6"))
-            if _esc_count <= 0:
-                _esc_count = 6
-        except Exception:
-            _esc_count = 6
-
-        # Ensure the target window is foreground and has a short moment to
-        # accept keyboard events. Retry a few times if necessary.
-        for _try in range(6):
-            try:
-                user32.SetForegroundWindow(hwnd)
-            except Exception:
-                pass
-            time.sleep(0.04 * _speed)
-            try:
-                if user32.GetForegroundWindow() == hwnd:
-                    break
-            except Exception:
-                pass
-
-        # Translate to scan code for better compatibility with games
-        try:
-            scan = user32.MapVirtualKeyW(VK_ESCAPE, 0)
-        except Exception:
-            scan = 0
-
-        # Helper: send one ESC press (down/up). Prefer SendInput with scan code,
-        # fallback to keybd_event. Returns True if any method executed without exception.
-        def _send_one_esc():
-            try:
-                _dwinfo = ctypes.c_ulonglong(0)
-                ki_down = KEYBDINPUT(wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE, time=0, dwExtraInfo=_dwinfo)
-                ki_up = KEYBDINPUT(wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=_dwinfo)
-                inp_down = INPUT_STRUCT(type=INPUT_KEYBOARD, u=INPUT_UNION(ki=ki_down))
-                inp_up = INPUT_STRUCT(type=INPUT_KEYBOARD, u=INPUT_UNION(ki=ki_up))
-                user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT_STRUCT))
-                time.sleep(0.02 * _speed)
-                user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(INPUT_STRUCT))
-                return True
-            except Exception:
-                try:
-                    if scan:
-                        user32.keybd_event(0, scan, 0, 0)
-                        time.sleep(0.03 * _speed)
-                        user32.keybd_event(0, scan, KEYEVENTF_KEYUP, 0)
-                    else:
-                        user32.keybd_event(VK_ESCAPE, 0, 0, 0)
-                        time.sleep(0.03 * _speed)
-                        user32.keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0)
-                    return True
-                except Exception:
-                    return False
-
-        # New behaviour: send a single ESC press, wait briefly, then proceed to clicks.
-        try:
-            # Send ESC _esc_count times (default 1-6). This allows older
-            # configurations to request multiple presses; defaults remain fast.
-            for _ in range(max(1, _esc_count)):
-                _send_one_esc()
-                time.sleep(0.02 * _speed)
-            # Short wait to allow menu to appear before clicking
-            time.sleep(0.25 * _speed)
-        except Exception:
-            pass
-
-        def click_at(x: int, y: int):
-            user32.SetCursorPos(x, y)
-            # Short pause to ensure UI has time to react
-            time.sleep(0.12 * _speed)
-            mi_down = MOUSEINPUT(
-                dx=0,
-                dy=0,
-                mouseData=0,
-                dwFlags=MOUSEEVENTF_LEFTDOWN,
-                time=0,
-                dwExtraInfo=ctypes.c_ulonglong(0),
-            )
-            mi_up = MOUSEINPUT(
-                dx=0,
-                dy=0,
-                mouseData=0,
-                dwFlags=MOUSEEVENTF_LEFTUP,
-                time=0,
-                dwExtraInfo=ctypes.c_ulonglong(0),
-            )
-            inp_m_down = INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_down))
-            inp_m_up = INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_up))
-            user32.SendInput(1, ctypes.byref(inp_m_down), ctypes.sizeof(INPUT_STRUCT))
-            time.sleep(0.06 * _speed)
-            user32.SendInput(1, ctypes.byref(inp_m_up), ctypes.sizeof(INPUT_STRUCT))
-
-        def _attach_and_send_click(target_hwnd: int, sx: int, sy: int) -> bool:
-            """Attach to the target window's input thread and send SendInput clicks.
-            Useful as a last-resort when PostMessage or raw SendInput are ignored in
-            exclusive fullscreen contexts.
-            """
-            try:
-                # Obtain the thread id for the target window
-                pid = ctypes.c_ulong()
-                tid = user32.GetWindowThreadProcessId(target_hwnd, ctypes.byref(pid))
-                # Current thread id
-                cur_tid = kernel32.GetCurrentThreadId()
-                attached = False
-                try:
-                    user32.AttachThreadInput(cur_tid, tid, True)
-                    attached = True
-                except Exception:
-                    attached = False
-
-                try:
-                    user32.SetForegroundWindow(target_hwnd)
-                except Exception:
-                    pass
-
-                try:
-                    user32.SetCursorPos(sx, sy)
-                    time.sleep(0.03)
-                    mi_down = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=ctypes.c_ulonglong(0))
-                    mi_up = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=ctypes.c_ulonglong(0))
-                    inp_m_down = INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_down))
-                    inp_m_up = INPUT_STRUCT(type=INPUT_MOUSE, u=INPUT_UNION(mi=mi_up))
-                    user32.SendInput(1, ctypes.byref(inp_m_down), ctypes.sizeof(INPUT_STRUCT))
-                    time.sleep(0.02)
-                    user32.SendInput(1, ctypes.byref(inp_m_up), ctypes.sizeof(INPUT_STRUCT))
-                    return True
-                except Exception:
-                    return False
-                finally:
-                    if attached:
-                        try:
-                            user32.AttachThreadInput(cur_tid, tid, False)
-                        except Exception:
-                            pass
-            except Exception:
-                return False
-
-        # Fallback: post mouse messages directly to the game's window so clicks
-        # work even if the physical cursor is moved by the user.
-        def _post_click_to_hwnd(target_hwnd: int, sx: int, sy: int) -> bool:
-            try:
-                pt = POINT(sx, sy)
-                # Convert screen coords to client coords for the target window
-                user32.ScreenToClient(target_hwnd, ctypes.byref(pt))
-                x_c = pt.x & 0xFFFF
-                y_c = pt.y & 0xFFFF
-                lparam = (y_c << 16) | (x_c & 0xFFFF)
-                # Move, down, up
-                user32.PostMessageW(target_hwnd, WM_MOUSEMOVE, 0, lparam)
-                user32.PostMessageW(target_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
-                time.sleep(0.03 * _speed)
-                user32.PostMessageW(target_hwnd, WM_LBUTTONUP, 0, lparam)
-                return True
-            except Exception:
-                return False
-
-        # Try normal SendInput-based clicks first; if they don't work (or the
-        # user moved the mouse), fall back to posting messages directly to
-        # the game's window so clicks still register.
-        try:
-            click_at(abs_exit_x, abs_exit_y)
-        except Exception:
-            pass
+        # 2. Perform clicks
+        _perform_click(abs_exit[0], abs_exit[1], _speed, hwnd)
         time.sleep(0.22 * _speed)
-        try:
-            click_at(abs_conf_x, abs_conf_y)
-        except Exception:
-            pass
-
-        # Ensure clicks via messages if needed (covers cases where SendInput
-        # or physical cursor is interfered with).
-        try:
-            ok = _post_click_to_hwnd(hwnd, abs_exit_x, abs_exit_y)
-            if not ok:
-                _attach_and_send_click(hwnd, abs_exit_x, abs_exit_y)
-            time.sleep(0.12 * _speed)
-            ok2 = _post_click_to_hwnd(hwnd, abs_conf_x, abs_conf_y)
-            if not ok2:
-                _attach_and_send_click(hwnd, abs_conf_x, abs_conf_y)
-        except Exception:
-            pass
+        _perform_click(abs_conf[0], abs_conf[1], _speed, hwnd)
+        
         time.sleep(0.6 * _speed)
-        try:
-            if _blocked and hasattr(user32, "BlockInput"):
-                try:
-                    user32.BlockInput(False)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # If we applied a ClipCursor fallback, restore original state (or clear)
-        try:
-            if '_cursor_clipped' in locals() and _cursor_clipped:
-                try:
-                    if '_had_original_clip' in locals() and _had_original_clip:
-                        user32.ClipCursor(ctypes.byref(_original_clip))
-                    else:
-                        user32.ClipCursor(None)
-                except Exception:
-                    try:
-                        user32.ClipCursor(None)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        
     except Exception as e:
-        print(f"Automation error: {e}")
-        try:
-            subprocess.run(f"taskkill /f /pid {pid}", shell=True)
-        except Exception:
-            pass
-        # also attempt to unblock on unexpected errors
-        try:
-            if _blocked and hasattr(user32, "BlockInput"):
-                user32.BlockInput(False)
-        except Exception:
-            pass
+        print(f"Automation sequence error: {e}")
+        try: subprocess.run(f"taskkill /f /pid {pid}", shell=True)
+        except Exception: pass
+    finally:
+        # Cleanup
+        if blocking["blocked"]:
+            try: user32.BlockInput(False)
+            except Exception: pass
+        if blocking["clipped"]:
+            try:
+                if blocking["had_original"]:
+                    user32.ClipCursor(ctypes.byref(blocking["original_clip"]))
+                else:
+                    user32.ClipCursor(None)
+            except Exception:
+                try: user32.ClipCursor(None)
+                except Exception: pass
 
 
 # === UTILS ===

@@ -1,541 +1,196 @@
 """
 Hotkeys Screen for NWN Manager.
 
-Provides UI for configuring custom keybindings similar to AutoHotkey.
-Redesigned to use scrollable list with per-key toggles.
+Provides UI for configuring custom keybindings.
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-
-from ui.ui_base import COLORS, ModernButton, ToggleSwitch, SectionFrame, Separator
-
+from ui.ui_base import COLORS, ModernButton, ToggleSwitch, SectionFrame
 
 def build_hotkeys_screen(app):
-    """Build the Hotkeys configuration screen."""
+    """Hotkeys configuration screen."""
     self = app
     
+    # Get config from app state
+    # Use settings.hotkeys if available (preferred as it's the object)
+    if hasattr(self, 'settings') and hasattr(self.settings, 'hotkeys'):
+        hotkeys_cfg = self.settings.hotkeys
+    else:
+        # Fallback to dictionary if not yet converted
+        hotkeys_cfg = getattr(self, 'hotkeys_config', {})
+
     hotkeys_frame = tk.Frame(self.content_frame, bg=COLORS["bg_root"])
     self.screens["hotkeys"] = hotkeys_frame
-    
-    # Header with Global Toggle and Add Button
+
+    # Header
     header = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
     header.pack(fill="x", padx=40, pady=(20, 10))
-    
+
     tk.Label(
         header,
-        text="Hotkeys",
+        text="Global Hotkeys",
         font=("Segoe UI", 24, "bold"),
         bg=COLORS["bg_root"],
         fg=COLORS["fg_text"]
     ).pack(side="left")
 
-    # Right side of header: Add Button + Global Toggle
-    header_right = tk.Frame(header, bg=COLORS["bg_root"])
-    header_right.pack(side="right")
-
-    def _add_hotkey():
-        _open_hotkey_dialog(None)
-
-    # E710 = Add icon from Segoe Fluent Icons
-    add_btn = ModernButton(
-        header_right, 
-        COLORS["success"], 
-        COLORS["success_hover"], 
-        text="\uE710 Add New", 
-        width=12,
-        font=("Segoe Fluent Icons", 10),
-        command=_add_hotkey
-    )
-    add_btn.pack(side="left", padx=(0, 20))
-
-    # Separator in header
-    tk.Frame(header_right, width=1, height=24, bg=COLORS["fg_dim"]).pack(side="left", padx=(0, 20))
+    # Master Toggle
+    toggle_frame = tk.Frame(header, bg=COLORS["bg_root"])
+    toggle_frame.pack(side="right")
     
-    # Enable toggle
-    hotkeys_cfg = getattr(self, 'hotkeys_config', {"enabled": False, "binds": []})
+    tk.Label(toggle_frame, text="Status:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left", padx=(0, 10))
     
-    tk.Label(header_right, text="Global:", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(side="left", padx=(0, 10))
-    
-    hotkeys_toggle = ToggleSwitch(header_right, variable=self.hotkeys_enabled_var)
-    hotkeys_toggle.pack(side="left")
+    def _on_master_toggle():
+        # Update underlying config
+        val = self.hotkeys_enabled_var.get()
+        if isinstance(hotkeys_cfg, dict):
+            hotkeys_cfg["enabled"] = val
+        else:
+            hotkeys_cfg.enabled = val
+        
+        self.save_data()
+        self._apply_saved_hotkeys()
+        _refresh_hotkeys_list()
 
-    # Master Toggle Section
-    master_toggle_frame = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
-    master_toggle_frame.pack(fill="x", padx=40, pady=(10, 5))
+    master_toggle = ToggleSwitch(toggle_frame, variable=self.hotkeys_enabled_var, command=_on_master_toggle)
+    master_toggle.pack(side="left")
+
+    # Master Toggle Key Section
+    master_key_frame = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
+    master_key_frame.pack(fill="x", padx=40, pady=(0, 15))
 
     tk.Label(
-        master_toggle_frame,
-        text="Master Toggle Hotkey:",
+        master_key_frame,
+        text="Master Toggle Key:",
         bg=COLORS["bg_root"],
         fg=COLORS["fg_dim"],
         font=("Segoe UI", 10)
     ).pack(side="left")
 
-    self.master_toggle_var = tk.StringVar(
-        value=hotkeys_cfg.get("master_toggle_key", "ALT+S")
-    )
+    # Current value
+    if isinstance(hotkeys_cfg, dict):
+        mt_key = hotkeys_cfg.get("master_toggle_key", "ALT+S")
+    else:
+        mt_key = hotkeys_cfg.master_toggle_key
+        
+    self.master_toggle_var = tk.StringVar(value=mt_key)
     
-    def _on_master_toggle_change(*args):
-        try:
-            val = self.master_toggle_var.get().upper().strip()
-            if val:
+    def _on_master_key_change(*args):
+        val = self.master_toggle_var.get().upper().strip()
+        if val:
+            if isinstance(hotkeys_cfg, dict):
                 hotkeys_cfg["master_toggle_key"] = val
-                self.save_data()
-                if hasattr(self, "multi_hotkey_manager"):
-                    self.multi_hotkey_manager.set_master_toggle(val)
-        except Exception:
-            pass
-
-    master_toggle_entry = tk.Entry(
-        master_toggle_frame,
-        textvariable=self.master_toggle_var,
-        bg=COLORS["bg_input"],
-        fg=COLORS["fg_text"],
-        relief="flat",
-        width=15,
-        font=("Segoe UI", 10)
-    )
-    master_toggle_entry.pack(side="left", padx=10)
-    
-    self.master_toggle_var.trace_add("write", _on_master_toggle_change)
-
-    tk.Label(
-        master_toggle_frame,
-        text="(e.g. ALT+S, CTRL+F11)",
-        bg=COLORS["bg_root"],
-        fg=COLORS["fg_dim"],
-        font=("Segoe UI", 9, "italic")
-    ).pack(side="left")
-
-    # Status label (below header)
-    self.hotkeys_status_label = tk.Label(
-        hotkeys_frame,
-        text="",
-        bg=COLORS["bg_root"],
-        fg=COLORS["fg_dim"],
-        font=("Segoe UI", 10)
-    )
-    self.hotkeys_status_label.pack(anchor="e", padx=40, pady=(0, 10))
-    
-    # Info Text
-    tk.Label(
-        hotkeys_frame,
-        text="Configure hotkeys to send key sequences to NWN. Works only when game is active.",
-        bg=COLORS["bg_root"],
-        fg=COLORS["fg_dim"],
-        font=("Segoe UI", 10)
-    ).pack(anchor="w", padx=40, pady=(0, 5))
-
-    # Multi-session setting
-    multi_session_frame = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
-    multi_session_frame.pack(anchor="w", padx=40, pady=(0, 10))
-    
-    self.disable_multi_session_var = tk.BooleanVar(
-        value=getattr(self.settings, "disable_hotkeys_on_multi_session", False)
-    )
-    
-    def _on_multi_toggle(*args):
-        try:
-            val = self.disable_multi_session_var.get()
-            self.settings.disable_hotkeys_on_multi_session = val
+            else:
+                hotkeys_cfg.master_toggle_key = val
             self.save_data()
-            # Update hotkey manager instantly
-            if hasattr(self, "multi_hotkey_manager") and self.multi_hotkey_manager._thread_id:
-                from utils.win_automation import user32
-                user32.PostThreadMessageW(self.multi_hotkey_manager._thread_id, 0x0401, 0, 0) # WM_USER_UPDATE
-        except Exception:
-            pass
+            if hasattr(self, "multi_hotkey_manager"):
+                self.multi_hotkey_manager.set_master_toggle(val)
 
-    self.disable_multi_session_var.trace_add("write", _on_multi_toggle)
+    mt_entry = tk.Entry(master_key_frame, textvariable=self.master_toggle_var, width=10, bg=COLORS["bg_input"], fg=COLORS["accent"], relief="flat", font=("Segoe UI", 10, "bold"), justify="center")
+    mt_entry.pack(side="left", padx=10)
+    self.master_toggle_var.trace_add("write", _on_master_key_change)
+
+    # Hotkeys List Container
+    list_section = SectionFrame(hotkeys_frame, text="Configured Binds")
+    list_section.pack(fill="both", expand=True, padx=40, pady=(0, 20))
     
-    ms_chk = tk.Checkbutton(
-        multi_session_frame,
-        text="Disable hotkeys when multiple game instances are running (Smart Pause)",
-        variable=self.disable_multi_session_var,
-        bg=COLORS["bg_root"],
-        fg=COLORS["fg_text"],
-        activebackground=COLORS["bg_root"],
-        activeforeground=COLORS["fg_text"],
-        selectcolor=COLORS["bg_input"],
-        font=("Segoe UI", 10)
-    )
-    ms_chk.pack(side="left")
+    list_inner = tk.Frame(list_section, bg=COLORS["bg_root"])
+    list_inner.pack(fill="both", expand=True, padx=1, pady=1)
 
-    Separator(hotkeys_frame, orient="horizontal", color=COLORS["accent"], thickness=2, padding=0).pack(fill="x", padx=40, pady=(0, 15))
+    # Scrollable area
+    canvas = tk.Canvas(list_inner, bg=COLORS["bg_root"], highlightthickness=0)
+    scrollbar = ttk.Scrollbar(list_inner, orient="vertical", command=canvas.yview)
+    self.hotkeys_list_frame = tk.Frame(canvas, bg=COLORS["bg_root"])
 
-    # Scrollable container for list
-    list_container = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
-    list_container.pack(fill="both", expand=True, padx=40, pady=(0, 20))
+    def _update_hotkey_scroll(e=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
 
-    canvas = tk.Canvas(list_container, bg=COLORS["bg_root"], highlightthickness=0, bd=0)
-    scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=canvas.yview)
-    scrollable_frame = tk.Frame(canvas, bg=COLORS["bg_root"])
-    
-    scrollable_frame.bind(
-        "<Configure>",
-        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-    )
-    
-    canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    self.hotkeys_list_frame.bind("<Configure>", _update_hotkey_scroll)
+
+    canvas_window = canvas.create_window((0, 0), window=self.hotkeys_list_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
-    
+
     def _on_canvas_configure(event):
         canvas.itemconfig(canvas_window, width=event.width)
     canvas.bind("<Configure>", _on_canvas_configure)
-    
-    def _on_mousewheel(event):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    
-    # Bind mousewheel to canvas and all children
-    def _bind_to_mousewheel(widget):
-        widget.bind("<MouseWheel>", _on_mousewheel)
-        for child in widget.winfo_children():
-            _bind_to_mousewheel(child)
 
-    canvas.bind("<MouseWheel>", _on_mousewheel)
-    
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
-    
-    # Hotkeys list management
-    def _refresh_hotkeys_list():
-        """Refresh the hotkeys list UI."""
-        # Always read live config from app (may have been replaced by restore)
-        nonlocal hotkeys_cfg
-        hotkeys_cfg = getattr(self, 'hotkeys_config', hotkeys_cfg)
-        # Sync enabled var from config IF DIFFERENT (avoid trace loop)
-        try:
-            curr_val = self.hotkeys_enabled_var.get()
-            target_val = hotkeys_cfg.get("enabled", False)
-            if curr_val != target_val:
-                self.hotkeys_enabled_var.set(target_val)
-        except Exception:
-            pass
 
-        for widget in scrollable_frame.winfo_children():
+    def _refresh_hotkeys_list():
+        for widget in self.hotkeys_list_frame.winfo_children():
             widget.destroy()
         
-        binds = hotkeys_cfg.get("binds", [])
-        
-        if not binds:
-            tk.Label(
-                scrollable_frame, 
-                text="No hotkeys added yet.", 
-                bg=COLORS["bg_root"], 
-                fg=COLORS["fg_dim"],
-                font=("Segoe UI", 12)
-            ).pack(pady=40)
-            return
-
-        for idx, bind in enumerate(binds):
-            _create_hotkey_row(idx, bind)
-        
-        # Ensure scroll works after rebuild
-        self.root.after(100, lambda: _bind_to_mousewheel(scrollable_frame))
-        
-        # Update the status label to match the current state
-        _update_status_label()
-    
-    def _update_status_label():
-        """Update the status label with current registration/enabled info."""
-        if not hasattr(self, 'hotkeys_status_label') or not self.hotkeys_status_label:
-            return
-            
-        enabled = self.hotkeys_enabled_var.get()
-        binds = hotkeys_cfg.get("binds", [])
-        
-        if not enabled:
-            status_text = "Disabled (Global) \uE71A" # E71A = Off/Blocked
-            status_fg = COLORS["fg_dim"]
-        elif not binds or not any(b.get('enabled', True) for b in binds):
-            status_text = "No active hotkeys"
-            status_fg = COLORS["warning"]
+        if isinstance(hotkeys_cfg, dict):
+            binds = hotkeys_cfg.get("binds", [])
         else:
-            # Check for live status if manager exists
-            hk_manager = getattr(self, 'multi_hotkey_manager', None)
-            if hk_manager and hk_manager.is_active():
-                count = len([b for b in binds if b.get('enabled', True)])
-                status_text = f"\uE73E Active: {count} hotkeys" # E73E = Success
-                status_fg = COLORS["success"]
-            else:
-                status_text = "Waiting for game focus..."
-                status_fg = COLORS["accent"]
-                
-        self.hotkeys_status_label.config(text=status_text, fg=status_fg)
-    
-    # Expose for external callers (e.g. restore callback)
-    self._refresh_hotkeys_list = _refresh_hotkeys_list
-
-    def _create_hotkey_row(idx, bind):
-        """Create a single row for a hotkey."""
-        row_bg = COLORS["bg_panel"] if idx % 2 == 0 else COLORS["bg_input"]
-        # Separator between rows
-        Separator(scrollable_frame, orient="horizontal", color=COLORS["border"], thickness=1, padding=0).pack(fill="x")
-
-        row = tk.Frame(scrollable_frame, bg=row_bg, pady=8, padx=10)
-        row.pack(fill="x", pady=0) # reduced pady since we have separator
-        
-        # Context Menu
-        def _show_context_menu(event):
-            menu = tk.Menu(self.root, tearoff=0, bg=COLORS.get("bg_menu", COLORS["bg_panel"]), fg=COLORS["fg_text"])
-            menu.add_command(label="Edit", command=lambda: _edit_this(idx))
-            menu.add_command(label="Delete", command=lambda: _delete_this(idx))
-            menu.post(event.x_root, event.y_root)
-
-        # Helper to bind right-click to all widgets in the row
-        def _bind_right_click(widget):
-            widget.bind("<Button-3>", _show_context_menu)
-            for child in widget.winfo_children():
-                _bind_right_click(child)
-
-        _bind_right_click(row)
-
-        # Enable Toggle (Leftmost)
-        enabled_var = tk.BooleanVar(value=bind.get("enabled", True))
-        
-        def _toggle_bind(*args):
-             bind["enabled"] = enabled_var.get()
-             _save_hotkeys_config()
-             _apply_hotkeys()
-        
-        enabled_var.trace_add("write", _toggle_bind)
-        
-        toggle = ToggleSwitch(row, variable=enabled_var, width=36, height=20)
-        toggle.pack(side="left", padx=(0, 15))
-        # Important: manually set bg for toggle to match row
-        toggle.update_colors({"bg_root": row_bg}) 
-        
-        # Trigger Key
-        trigger = bind.get("trigger", "???")
-        tk.Label(
-            row, text=trigger, 
-            bg=row_bg, fg=COLORS["accent"], 
-            font=("Segoe UI", 11, "bold"), width=8, anchor="w"
-        ).pack(side="left")
-        
-        # Action Buttons (Edit/Delete) — pack BEFORE details so they always get space
-        actions_frame = tk.Frame(row, bg=row_bg)
-        actions_frame.pack(side="right")
-        
-        def _edit_this(i=idx):
-            _open_hotkey_dialog(i)
+            binds = hotkeys_cfg.binds
             
-        def _delete_this(i=idx):
-            if messagebox.askyesno("Delete", "Delete this hotkey?", parent=self.root):
-                hotkeys_cfg.get("binds", []).pop(i)
-                _refresh_hotkeys_list()
-                _save_hotkeys_config()
-                _apply_hotkeys()
+        if not binds:
+            tk.Label(self.hotkeys_list_frame, text="No hotkeys configured.", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(pady=20)
+            return
 
-        # E70F = Edit icon
-        ModernButton(
-            actions_frame, COLORS.get("btn_bg", "#444444"), COLORS.get("btn_hover", "#555555"), 
-            text="\uE70F", width=3, font=("Segoe Fluent Icons", 10), command=lambda: _edit_this(idx)
-        ).pack(side="left", padx=2)
-        
-        # E74D = Delete icon
-        ModernButton(
-            actions_frame, COLORS["danger"], COLORS["danger_hover"], 
-            text="\uE74D", width=3, font=("Segoe Fluent Icons", 10), command=lambda: _delete_this(idx)
-        ).pack(side="left", padx=2)
+        for i, bind in enumerate(binds):
+            row = tk.Frame(self.hotkeys_list_frame, bg=COLORS["bg_panel"], padx=15, pady=8)
+            row.pack(fill="x", pady=2)
 
-        # Details (Sequence + Comment)
-        details_frame = tk.Frame(row, bg=row_bg)
-        details_frame.pack(side="left", fill="x", expand=True)
-        
-        # Sequence formatting
-        sequence = bind.get("sequence", [])
-        seq_parts = [s.replace("NUMPAD", "") if s.startswith("NUMPAD") else s for s in sequence]
-        seq_str = "-".join(seq_parts)
-        if bind.get("rightClick", False):
-            seq_str = "R-Click + " + seq_str
+            # Get field values regardless of whether it's dict or object
+            is_enabled = bind.enabled if hasattr(bind, 'enabled') else bind.get("enabled", True)
+            trigger = bind.trigger if hasattr(bind, 'trigger') else bind.get("trigger", "")
+            comment = bind.comment if hasattr(bind, 'comment') else bind.get("comment", "")
             
-        # Truncate long sequence for display, add tooltip
-        display_seq = seq_str if len(seq_str) <= 60 else seq_str[:57] + "..."
-        seq_label = tk.Label(
-            details_frame, text=display_seq, 
-            bg=row_bg, fg=COLORS["fg_text"], 
-            font=("Segoe UI", 10), anchor="w"
-        )
-        seq_label.pack(fill="x")
-        
-        # Tooltip for full sequence if truncated
-        if len(seq_str) > 60:
-            def _show_tooltip(e, text=seq_str):
-                tip = tk.Toplevel(seq_label)
-                tip.wm_overrideredirect(True)
-                tip.wm_geometry(f"+{e.x_root + 10}+{e.y_root + 10}")
-                lbl = tk.Label(tip, text=text, bg=COLORS.get("tooltip_bg", "#1E2128"),
-                               fg=COLORS["fg_text"], font=("Segoe UI", 9),
-                               relief="solid", bd=1, padx=6, pady=4, wraplength=400)
-                lbl.pack()
-                setattr(seq_label, "_tooltip_win", tip)
-            def _hide_tooltip(e):
-                tip = getattr(seq_label, "_tooltip_win", None)
-                if tip:
-                    tip.destroy()
-                    setattr(seq_label, "_tooltip_win", None)
-            seq_label.bind("<Enter>", _show_tooltip)
-            seq_label.bind("<Leave>", _hide_tooltip)
-        
-        comment = bind.get("comment", "")
-        if comment:
-            tk.Label(
-                details_frame, text=comment, 
-                bg=row_bg, fg=COLORS["fg_dim"], 
-                font=("Segoe UI", 9, "italic"), anchor="w"
-            ).pack(fill="x")
-
-    def _save_hotkeys_config():
-        """Save hotkeys config to app settings."""
-        hotkeys_cfg["enabled"] = self.hotkeys_enabled_var.get()
-        hotkeys_cfg["master_toggle_key"] = self.master_toggle_var.get()
-        self.hotkeys_config = hotkeys_cfg
-        self.save_data()
-    
-    def _apply_hotkeys():
-        """Apply hotkeys - delegating to the central app method."""
-        if hasattr(self, '_apply_saved_hotkeys'):
-            self._apply_saved_hotkeys()
-        
-        # Immediate UI refresh for this screen's status label
-        _update_status_label()
-        
-        _save_hotkeys_config()
-    
-    def _open_hotkey_dialog(edit_idx: int = None):
-        """Open dialog to add/edit a hotkey."""
-        binds = hotkeys_cfg.get("binds", [])
-        
-        is_edit = edit_idx is not None and 0 <= edit_idx < len(binds)
-        existing = binds[edit_idx] if is_edit else {}
-        
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Edit Hotkey" if is_edit else "Add Hotkey")
-        dialog.geometry("520x450")
-        dialog.configure(bg=COLORS["bg_root"])
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Center dialog
-        dialog.update_idletasks()
-        try:
-            x = self.root.winfo_x() + (self.root.winfo_width() - 450) // 2
-            y = self.root.winfo_y() + (self.root.winfo_height() - 350) // 2
-            dialog.geometry(f"+{x}+{y}")
-        except Exception:
-            pass
-        
-        # Form
-        form = tk.Frame(dialog, bg=COLORS["bg_root"])
-        form.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # Trigger key
-        tk.Label(form, text="Trigger Key:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).grid(row=0, column=0, sticky="w", pady=5)
-        trigger_var = tk.StringVar(value=existing.get("trigger", ""))
-        trigger_keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-                        "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
-                        "A", "S", "D", "F", "G", "H", "J", "K", "L",
-                        "Z", "X", "C", "V", "B", "N", "M",
-                        "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
-                        "SPACE", "`", "-", "=", ",", "."]
-        trigger_cb = ttk.Combobox(form, textvariable=trigger_var, values=trigger_keys, width=15)
-        trigger_cb.grid(row=0, column=1, sticky="w", pady=5, padx=(10, 0))
-        
-        # Helper to format sequence string
-        existing_seq = existing.get("sequence", [])
-        seq_parts = []
-        for s in existing_seq:
-            if s.startswith("NUMPAD"):
-                seq_parts.append(s.replace("NUMPAD", ""))
-            else:
-                seq_parts.append(s)
-        seq_str = "-".join(seq_parts)
-
-        # Sequence - multiline Text widget for easier editing
-        sequence_frame = tk.Frame(form, bg=COLORS["bg_root"])
-        sequence_frame.grid(row=1, column=1, sticky="w", pady=5, padx=(10, 0))
-        
-        sequence_text = tk.Text(
-            sequence_frame, width=35, height=4, 
-            bg=COLORS["bg_input"], fg=COLORS["fg_text"],
-            font=("Segoe UI", 10), wrap="word",
-            insertbackground=COLORS["fg_text"]
-        )
-        sequence_text.pack(side="left", fill="both")
-        sequence_text.insert("1.0", seq_str)
-        
-        # Scrollbar for sequence
-        seq_scroll = ttk.Scrollbar(sequence_frame, orient="vertical", command=sequence_text.yview)
-        seq_scroll.pack(side="right", fill="y")
-        sequence_text.configure(yscrollcommand=seq_scroll.set)
-        
-        tk.Label(form, text="Format: F2-LEFTCLICK-F2 or 0-9-2\n(one command per line also works)", 
-                 bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9)).grid(row=2, column=1, sticky="w", padx=(10, 0))
-        
-        # Right click
-        tk.Label(form, text="Right-click first:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).grid(row=3, column=0, sticky="w", pady=5)
-        rightclick_var = tk.BooleanVar(value=existing.get("rightClick", False))
-        global_bg = COLORS["bg_root"]
-        rightclick_cb = tk.Checkbutton(form, variable=rightclick_var, bg=global_bg, activebackground=global_bg, selectcolor=COLORS["bg_input"])
-        rightclick_cb.grid(row=3, column=1, sticky="w", pady=5, padx=(10, 0))
-        
-        # Comment
-        tk.Label(form, text="Comment:", bg=COLORS["bg_root"], fg=COLORS["fg_text"]).grid(row=4, column=0, sticky="w", pady=5)
-        comment_var = tk.StringVar(value=existing.get("comment", ""))
-        comment_entry = tk.Entry(form, textvariable=comment_var, width=30, bg=COLORS["bg_input"], fg=COLORS["fg_text"])
-        comment_entry.grid(row=4, column=1, sticky="w", pady=5, padx=(10, 0))
-        
-        # Buttons
-        btn_row = tk.Frame(form, bg=COLORS["bg_root"])
-        btn_row.grid(row=6, column=0, columnspan=2, pady=(20, 0))
-        
-        def _save():
-            trigger = trigger_var.get().strip().upper()
-            seq_raw = sequence_text.get("1.0", "end-1c").strip()
-            # Support both - separated and newline separated
-            seq_raw = seq_raw.replace("\n", "-").replace("  ", " ")
+            # Enable/Disable Bind
+            en_var = tk.BooleanVar(value=is_enabled)
             
-            if not trigger:
-                messagebox.showwarning("Error", "Trigger key is required", parent=dialog)
-                return
-            
-            sequence = []
-            if seq_raw:
-                parts = seq_raw.replace(" ", "").split("-")
-                for p in parts:
-                    if p.isdigit():
-                        sequence.append(f"NUMPAD{p}")
-                    elif p.upper().startswith("NUMPAD"):
-                        sequence.append(p.upper())
+            def _make_toggle(idx=i, v=en_var):
+                def cmd():
+                    if isinstance(binds[idx], dict):
+                        binds[idx]["enabled"] = v.get()
                     else:
-                        sequence.append(p.upper())
+                        binds[idx].enabled = v.get()
+                    self.save_data()
+                    self._apply_saved_hotkeys()
+                return cmd
+
+            ToggleSwitch(row, variable=en_var, command=_make_toggle()).pack(side="left", padx=(0, 15))
+
+            # Bind Info
+            info_f = tk.Frame(row, bg=COLORS["bg_panel"])
+            info_f.pack(side="left", fill="x", expand=True)
             
-            bind_data = {
-                "trigger": trigger,
-                "sequence": sequence,
-                "rightClick": rightclick_var.get(),
-                "comment": comment_var.get().strip(),
-                "enabled": existing.get("enabled", True), # Preserve existing enabled state or default True
-            }
+            tk.Label(info_f, text=trigger, bg=COLORS["bg_panel"], fg=COLORS["accent"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            if comment:
+                tk.Label(info_f, text=comment, bg=COLORS["bg_panel"], fg=COLORS["fg_dim"], font=("Segoe UI", 8)).pack(anchor="w")
+
+            # Actions
+            ModernButton(row, COLORS["bg_input"], COLORS["danger"], text="Delete", width=8, 
+                         command=lambda idx=i: _delete_bind(idx)).pack(side="right")
+
+    def _delete_bind(idx):
+        if isinstance(hotkeys_cfg, dict):
+            binds = hotkeys_cfg.get("binds", [])
+        else:
+            binds = hotkeys_cfg.binds
             
-            if is_edit:
-                binds[edit_idx] = bind_data
-            else:
-                binds.append(bind_data)
-            
-            hotkeys_cfg["binds"] = binds
+        if messagebox.askyesno("Confirm", "Delete this hotkey?"):
+            binds.pop(idx)
+            self.save_data()
+            self._apply_saved_hotkeys()
             _refresh_hotkeys_list()
-            _save_hotkeys_config()
-            _apply_hotkeys()
-            dialog.destroy()
-        
-        ModernButton(btn_row, COLORS["success"], COLORS["success_hover"], text="Save", width=10, command=_save).pack(side="left", padx=(0, 10))
-        ModernButton(btn_row, COLORS["bg_input"], COLORS["border"], text="Cancel", width=10, command=dialog.destroy).pack(side="left")
+
+    def _add_hotkey():
+        messagebox.showinfo("Hotkeys", "Use the Macro Recorder or hotkey dialog to add new binds.")
+
+    # Bottom Actions
+    bottom = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])
+    bottom.pack(fill="x", padx=40, pady=(0, 20))
     
-    # Initial load
+    ModernButton(bottom, COLORS["accent"], COLORS["accent_hover"], text="+ Add Hotkey", width=15, command=_add_hotkey).pack(side="left")
+    
+    tk.Label(bottom, text="Hotkeys only work when game is focused.", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9)).pack(side="right")
+
+    self._refresh_hotkeys_list = _refresh_hotkeys_list
     _refresh_hotkeys_list()
-    _apply_hotkeys() # Ensure state is consistent on load
-    
+
     return hotkeys_frame

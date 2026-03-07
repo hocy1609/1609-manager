@@ -107,19 +107,6 @@ class Profile:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def __getitem__(self, key: str) -> Any:
-        try:
-            return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key)
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        setattr(self, key, value)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
-
-
 @dataclass
 class OpenWoundsConfig:
     enabled: bool = False
@@ -182,7 +169,9 @@ class HotkeysConfig:
     binds: List[HotkeyBind] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HotkeysConfig":
+    def from_dict(cls, data: Any) -> "HotkeysConfig":
+        if isinstance(data, cls):
+            return data
         data = data if isinstance(data, dict) else {}
         binds_raw = _clean_list(data.get("binds", []))
         return cls(
@@ -200,29 +189,64 @@ class HotkeysConfig:
 
 
 @dataclass
+class WebhookConfig:
+    url: str
+    name: str = "Webhook"
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "WebhookConfig":
+        if isinstance(data, cls):
+            return data
+        if isinstance(data, str):
+            return cls(url=data)
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            url=_clean_str(data.get("url", "")),
+            name=_clean_str(data.get("name", "Webhook")),
+            enabled=_clean_bool(data.get("enabled", True)),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class LogMonitorConfig:
     enabled: bool = False
     log_path: str = ""
-    webhooks: List[str] = field(default_factory=list)
+    webhooks: List[WebhookConfig] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)
     open_wounds: OpenWoundsConfig = field(default_factory=OpenWoundsConfig)
     auto_fog: AutoFogConfig = field(default_factory=AutoFogConfig)
+    spy_enabled: bool = False
+    mention_here: bool = False
+    mention_everyone: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LogMonitorConfig":
-        ow_raw = data.get("open_wounds", {}) if isinstance(data, dict) else {}
-        af_raw = data.get("auto_fog", {}) if isinstance(data, dict) else {}
+        if isinstance(data, cls):
+            return data
+        data = data if isinstance(data, dict) else {}
+        ow_raw = data.get("open_wounds", {})
+        af_raw = data.get("auto_fog", {})
+        webhooks_raw = _clean_list(data.get("webhooks", []))
+        
         return cls(
-            enabled=_clean_bool(data.get("enabled", False) if isinstance(data, dict) else False),
-            log_path=_clean_str(data.get("log_path", "") if isinstance(data, dict) else ""),
-            webhooks=[_clean_str(w) for w in _clean_list(data.get("webhooks", []))] if isinstance(data, dict) else [],
-            keywords=[_clean_str(k) for k in _clean_list(data.get("keywords", []))] if isinstance(data, dict) else [],
+            enabled=_clean_bool(data.get("enabled", False)),
+            log_path=_clean_str(data.get("log_path", "")),
+            webhooks=[WebhookConfig.from_dict(w) for w in webhooks_raw],
+            keywords=[_clean_str(k) for k in _clean_list(data.get("keywords", []))],
             open_wounds=OpenWoundsConfig.from_dict(ow_raw),
             auto_fog=AutoFogConfig.from_dict(af_raw),
+            spy_enabled=_clean_bool(data.get("spy_enabled", False)),
+            mention_here=_clean_bool(data.get("mention_here", False)),
+            mention_everyone=_clean_bool(data.get("mention_everyone", False)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
+        payload["webhooks"] = [w.to_dict() if hasattr(w, 'to_dict') else w for w in self.webhooks]
         payload["open_wounds"] = self.open_wounds.to_dict()
         payload["auto_fog"] = self.auto_fog.to_dict()
         return payload
@@ -250,15 +274,15 @@ class Settings:
     theme: str = "dark"
     # Server groups
     server_group: str = "siala"  # Current active group: "siala" or "cormyr"
-    server_groups: Dict[str, List[Dict[str, str]]] = field(default_factory=lambda: {
+    server_groups: Dict[str, List[Server]] = field(default_factory=lambda: {
         "siala": [
-            {"name": "Siala Main (play.siala.online)", "ip": "play.siala.online"},
-            {"name": "Siala Test (91.202.25.110:5122)", "ip": "91.202.25.110:5122"},
+            Server(name="Siala Main (play.siala.online)", ip="play.siala.online"),
+            Server(name="Siala Test (91.202.25.110:5122)", ip="91.202.25.110:5122"),
         ],
         "cormyr": [
-            {"name": "Cormyr Main (91.202.25.110)", "ip": "91.202.25.110"},
-            {"name": "Cormyr Mirror 1 (159.69.240.215:5122)", "ip": "159.69.240.215:5122"},
-            {"name": "Cormyr Mirror 2 (85.198.108.93)", "ip": "85.198.108.93"},
+            Server(name="Cormyr Main (91.202.25.110)", ip="91.202.25.110"),
+            Server(name="Cormyr Mirror 1 (159.69.240.215:5122)", ip="159.69.240.215:5122"),
+            Server(name="Cormyr Mirror 2 (85.198.108.93)", ip="85.198.108.93"),
         ],
     })
     # Saved CD keys for reuse across profiles: [{"name": "Key 1", "key": "XXXXX-..."}]
@@ -281,33 +305,45 @@ class Settings:
         last_server = _clean_str(data.get("last_server", ""))
         # filter legacy empty servers
         servers = [s for s in servers if s.ip]
+        
+        # LogMonitor initialization (restored)
         lm_cfg = LogMonitorConfig.from_dict(data.get("log_monitor", {}))
-        hotkeys_cfg = HotkeysConfig.from_dict(data.get("hotkeys", {}))
-        # Migrate hotkeys from log_monitor if present (backward compatibility)
-        if not hotkeys_cfg.binds and "hotkeys" in data.get("log_monitor", {}):
-            old_hotkeys = data["log_monitor"].get("hotkeys", {})
-            hotkeys_cfg = HotkeysConfig.from_dict(old_hotkeys)
+        
+        # Hotkeys migration and loading
+        hotkeys_raw = data.get("hotkeys", {})
+        # If no hotkeys in top level, check legacy log_monitor
+        if not hotkeys_raw and "log_monitor" in data:
+            hotkeys_raw = data["log_monitor"].get("hotkeys", {})
+        
+        hotkeys_cfg = HotkeysConfig.from_dict(hotkeys_raw)
+        
         sessions_raw = data.get("sessions", {})
         sessions = {_clean_str(k): _clean_int(v) for k, v in sessions_raw.items()} if isinstance(sessions_raw, dict) else {}
-        # Default server groups
+        
+        # Server groups migration
         default_groups = {
             "siala": [
-                {"name": "Siala Main (play.siala.online)", "ip": "play.siala.online"},
-                {"name": "Siala Test (91.202.25.110:5122)", "ip": "91.202.25.110:5122"},
+                Server(name="Siala Main (play.siala.online)", ip="play.siala.online"),
+                Server(name="Siala Test (91.202.25.110:5122)", ip="91.202.25.110:5122"),
             ],
             "cormyr": [
-                {"name": "Cormyr Main (91.202.25.110)", "ip": "91.202.25.110"},
-                {"name": "Cormyr Mirror 1 (159.69.240.215:5122)", "ip": "159.69.240.215:5122"},
-                {"name": "Cormyr Mirror 2 (85.198.108.93)", "ip": "85.198.108.93"},
+                Server(name="Cormyr Main (91.202.25.110)", ip="91.202.25.110"),
+                Server(name="Cormyr Mirror 1 (159.69.240.215:5122)", ip="159.69.240.215:5122"),
+                Server(name="Cormyr Mirror 2 (85.198.108.93)", ip="85.198.108.93"),
             ],
         }
-        server_groups_raw = data.get("server_groups", default_groups)
-        if not isinstance(server_groups_raw, dict):
-            server_groups_raw = default_groups
-        # Ensure both groups exist
-        for grp in ["siala", "cormyr"]:
-            if grp not in server_groups_raw:
-                server_groups_raw[grp] = default_groups[grp]
+        
+        server_groups_raw = data.get("server_groups", {})
+        server_groups = {}
+        if isinstance(server_groups_raw, dict):
+            for grp, srvs in server_groups_raw.items():
+                if isinstance(srvs, list):
+                    server_groups[grp] = [Server.from_dict(s) if isinstance(s, dict) else s for s in srvs]
+        
+        # Ensure default groups exist
+        for grp in default_groups:
+            if grp not in server_groups:
+                server_groups[grp] = default_groups[grp]
         
         return cls(
             doc_path=_clean_str(data.get("doc_path", fallback_docs)) or fallback_docs,
@@ -328,7 +364,7 @@ class Settings:
             clip_margin=_clean_int(data.get("clip_margin", 48)),
             theme=_clean_str(data.get("theme", "dark")) or "dark",
             server_group=_clean_str(data.get("server_group", "siala")) or "siala",
-            server_groups=server_groups_raw,
+            server_groups=server_groups,
             saved_keys=_clean_list(data.get("saved_keys", [])),
             minimize_to_tray=_clean_bool(data.get("minimize_to_tray", True)),
             run_on_startup=_clean_bool(data.get("run_on_startup", False)),
@@ -343,7 +379,53 @@ class Settings:
         payload["log_monitor"] = self.log_monitor.to_dict()
         payload["hotkeys"] = self.hotkeys.to_dict()
         payload["sessions"] = self.sessions
+        
+        # Manual conversion for server_groups
+        payload["server_groups"] = {
+            grp: [s.to_dict() for s in srvs]
+            for grp, srvs in self.server_groups.items()
+        }
         return payload
+
+    def get_key_registry(self) -> List[Dict[str, Any]]:
+        """
+        Returns a list of unique CD keys found in settings and profiles.
+        Each entry: { 'key': '...', 'name': '...', 'profiles': ['...', ...] }
+        """
+        registry = {} # key -> {name, profiles}
+        
+        # 1. Add keys from all profiles first (most accurate usage info)
+        for p in self.profiles:
+            key_val = p.cdKey.upper().strip()
+            if not key_val:
+                continue
+                
+            if key_val not in registry:
+                registry[key_val] = {
+                    "key": key_val,
+                    "name": f"{key_val[:5]}...{key_val[-5:]}", # Short key representation
+                    "profiles": [p.playerName]
+                }
+            else:
+                if p.playerName not in registry[key_val]["profiles"]:
+                    registry[key_val]["profiles"].append(p.playerName)
+        
+        # 2. Add explicitly saved keys from settings if not already there
+        for k in self.saved_keys:
+            key_val = k.get("key", "").upper().strip()
+            if key_val and key_val not in registry:
+                registry[key_val] = {
+                    "key": key_val,
+                    "name": k.get("name", "Unnamed Key"),
+                    "profiles": []
+                }
+            elif key_val in registry:
+                # If it's already there, just update the name if the user gave it a pretty name
+                custom_name = k.get("name")
+                if custom_name and not custom_name.startswith(key_val[:3]):
+                    registry[key_val]["name"] = custom_name
+                    
+        return list(registry.values())
 
 
 def load_settings(path: str, fallback_docs: str, fallback_exe: str) -> Settings:
