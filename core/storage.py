@@ -102,13 +102,37 @@ class SessionManager:
 
     def is_alive(self, pid: int) -> bool:
         try:
-            h_process = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+            h_process = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | 0x0010, False, pid)  # 0x0010 = PROCESS_VM_READ
             if not h_process:
                 return False
             exit_code = ctypes.c_ulong()
             kernel32.GetExitCodeProcess(h_process, ctypes.byref(exit_code))
+            
+            if exit_code.value != STILL_ACTIVE:
+                kernel32.CloseHandle(h_process)
+                return False
+                
+            # Extra safety: check image name to prevent false positives when PIDs are reused by other programs
+            try:
+                psapi = ctypes.windll.psapi
+                buf = ctypes.create_unicode_buffer(512)
+                if psapi.GetProcessImageFileNameW(h_process, buf, 512) > 0:
+                    # Get base name of configured executable
+                    name = os.path.basename(buf.value).lower()
+                    allowed_exes = ["nwmain.exe", "xnwn.exe"]
+                    if self._app and hasattr(self._app, 'settings') and self._app.settings.exe_path:
+                        conf_exe = os.path.basename(self._app.settings.exe_path).lower()
+                        if conf_exe and conf_exe not in allowed_exes:
+                            allowed_exes.append(conf_exe)
+                    
+                    if name not in allowed_exes:
+                        kernel32.CloseHandle(h_process)
+                        return False
+            except Exception:
+                pass
+                
             kernel32.CloseHandle(h_process)
-            return exit_code.value == STILL_ACTIVE
+            return True
         except Exception:
             return False
 

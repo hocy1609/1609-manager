@@ -1,6 +1,18 @@
 @echo off
 REM === 1609 Manager Build Script ===
 
+:: --- Auto-Elevation to Administrator ---
+net session >nul 2>&1
+if %errorLevel% NEQ 0 (
+    echo [!] Requesting Administrator privileges...
+    echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
+    echo UAC.ShellExecute "%~s0", "", "", "runas", 1 >> "%temp%\getadmin.vbs"
+    "%temp%\getadmin.vbs"
+    del "%temp%\getadmin.vbs"
+    exit /B
+)
+:: ---------------------------------------
+
 cd /d "%~dp0"
 
 echo [1/3] Closing running instances...
@@ -24,8 +36,6 @@ if %errorlevel% equ 0 (
     echo   BUILD SUCCESSFUL!
     echo   Output: dist\1609Manager.exe
     echo ========================================
-    echo Closing in 5 seconds...
-    ping -n 6 127.0.0.1 > nul
 ) else (
     echo.
     echo [!] BUILD FAILED! Check build\onefile_build for logs.

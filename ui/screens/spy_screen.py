@@ -28,7 +28,6 @@ def build_spy_screen(app):
     canvas.bind("<Configure>", _on_canvas_configure)
 
     canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
 
     # Mousewheel support
     def _on_mousewheel(event):
@@ -224,6 +223,84 @@ def build_spy_screen(app):
     tk.Checkbutton(mentions_frame, text="@here", variable=self.log_monitor_state.mention_here_var, bg=COLORS["bg_root"], fg=COLORS["fg_text"], activebackground=COLORS["bg_root"], selectcolor=COLORS["bg_input"], command=_toggle_ping).pack(side="left", padx=(0, 5))
     tk.Checkbutton(mentions_frame, text="@everyone", variable=self.log_monitor_state.mention_everyone_var, bg=COLORS["bg_root"], fg=COLORS["fg_text"], activebackground=COLORS["bg_root"], selectcolor=COLORS["bg_input"], command=_toggle_ping).pack(side="left")
 
+    # --- Profiles Section ---
+    profiles_frame = SectionFrame(main, text="Monitored Profiles")
+    profiles_frame.pack(fill="x", pady=(0, 15))
+    profiles_inner = tk.Frame(profiles_frame, bg=COLORS["bg_root"])
+    profiles_inner.pack(fill="x", padx=15, pady=8)
+
+    tk.Label(profiles_inner, text="If none are selected, Spy Mode will NOT track any profiles.", bg=COLORS["bg_root"], fg=COLORS["fg_dim"], font=("Segoe UI", 9, "italic")).pack(anchor="w", pady=(0, 5))
+
+    self.spy_prof_vars = {}
+    spy_profiles_list = self.log_monitor_state.config.get("spy_profiles", [])
+
+    def _on_profile_toggled(p_name, var):
+        current = set(self.log_monitor_state.config.get("spy_profiles", []))
+        if var.get():
+            current.add(p_name)
+        else:
+            current.discard(p_name)
+        self.log_monitor_state.config["spy_profiles"] = list(current)
+        self.log_monitor_manager._save_config()
+        # Trigger auto-enable check immediately if checking a profile while games are running
+        self.log_monitor_manager.on_sessions_changed()
+
+    if not self.profiles:
+        tk.Label(profiles_inner, text="No profiles created yet.", bg=COLORS["bg_root"], fg=COLORS["fg_dim"]).pack(anchor="w")
+    else:
+        # Bulk action buttons
+        bulk_btn_frame = tk.Frame(profiles_inner, bg=COLORS["bg_root"])
+        bulk_btn_frame.pack(fill="x", pady=(0, 6))
+
+        def _bulk_select(mode: str):
+            selected = set()
+            active_profiles = []
+            
+            # For 'active' mode, find which profile names are running
+            if mode == "active":
+                if hasattr(self, 'sessions') and self.sessions.sessions:
+                    active_profiles = [self.controller_profile_by_cdkey.get(cdkey) for cdkey in self.sessions.sessions.keys()]
+            
+            for p_name, var in self.spy_prof_vars.items():
+                if mode == "all":
+                    var.set(True)
+                    selected.add(p_name)
+                elif mode == "none":
+                    var.set(False)
+                elif mode == "active":
+                    if p_name in active_profiles:
+                        var.set(True)
+                        selected.add(p_name)
+                    else:
+                        var.set(False)
+            
+            self.log_monitor_state.config["spy_profiles"] = list(selected)
+            self.log_monitor_manager._save_config()
+
+        ModernButton(bulk_btn_frame, COLORS["bg_input"], COLORS["border"], text="Check All", width=10, command=lambda: _bulk_select("all")).pack(side="left", padx=(0, 5))
+        ModernButton(bulk_btn_frame, COLORS["bg_input"], COLORS["border"], text="Uncheck All", width=12, command=lambda: _bulk_select("none")).pack(side="left", padx=(0, 5))
+        ModernButton(bulk_btn_frame, COLORS["bg_input"], COLORS["border"], text="Active Only", width=12, command=lambda: _bulk_select("active")).pack(side="left")
+
+        for p in self.profiles:
+            p_name = p.name or f"Profile {self.profiles.index(p)+1}"
+            var = tk.BooleanVar(value=(p_name in spy_profiles_list))
+            self.spy_prof_vars[p_name] = var
+            cb = tk.Checkbutton(
+                profiles_inner, 
+                text=p_name, 
+                variable=var, 
+                bg=COLORS["bg_root"], 
+                fg=COLORS["fg_text"], 
+                activebackground=COLORS["bg_root"], 
+                selectcolor=COLORS["bg_input"]
+            )
+            
+            def _make_cmd(name=p_name, v=var):
+                return lambda: _on_profile_toggled(name, v)
+                
+            cb.configure(command=_make_cmd())
+            cb.pack(anchor="w", pady=2)
+
     # --- Keywords Section ---
     keywords_frame = SectionFrame(main, text="Keywords to Monitor")
     keywords_frame.pack(fill="x", pady=(0, 15))
@@ -252,12 +329,6 @@ def build_spy_screen(app):
     btn_frame = tk.Frame(history_inner, bg=COLORS["bg_root"])
     btn_frame.pack(fill="x", pady=(5, 0))
     ModernButton(btn_frame, COLORS["bg_input"], COLORS["border"], text="Clear History", width=12, command=_clear_history).pack(side="left")
-
-    def _manual_save():
-        if hasattr(self, 'log_monitor_manager'):
-            self.log_monitor_manager.save_log_monitor_settings(silent=False)
-            
-    ModernButton(btn_frame, COLORS["bg_input"], COLORS["border"], text="Save Configuration", width=20, command=_manual_save, fg=COLORS.get("success", "#95D5B2")).pack(side="right")
 
     _render_webhooks()
     # Recursive bind for mousewheel

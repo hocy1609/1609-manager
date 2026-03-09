@@ -9,3 +9,6 @@ Pillow>=10.0.0
 
 # Build tool (optional, for creating .exe)
 pyinstaller>=6.0.0
+
+# Keyboard and Mouse hooks
+pynput>=1.8.0

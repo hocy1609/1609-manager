@@ -132,10 +132,10 @@ def build_home_screen(app):
     self.lb.column("#0", width=250, stretch=True, anchor="w")
     self.lb.heading("#0", text="Profile", anchor="w")
 
+    # Use scrollbar for logic but don't pack it (hide it)
     scrollbar = ttk.Scrollbar(accounts_wrap, orient="vertical", command=self.lb.yview)
     self.lb.configure(yscrollcommand=scrollbar.set)
     self.lb.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
 
     # Inline action buttons
     self.inline_action_frame = tk.Frame(self.lb, bg=COLORS["bg_panel"], bd=0)
@@ -156,7 +156,10 @@ def build_home_screen(app):
     self.btn_delete_profile_top.pack(side="left")
 
     self.lb.bind("<<TreeviewSelect>>", self.on_select)
+    self.lb.bind("<<TreeviewOpen>>", self.on_category_expanded)
+    self.lb.bind("<<TreeviewClose>>", self.on_category_collapsed)
     self.lb.bind("<Button-1>", self.on_drag_start)
+    self.lb.bind("<B1-Motion>", self.on_drag_motion)
     self.lb.bind("<ButtonRelease-1>", self.on_drag_drop)
     self.lb.bind("<Button-2>", self.on_middle_click)
     self.lb.bind("<Button-3>", self.on_right_click)
@@ -301,10 +304,6 @@ def build_home_screen(app):
     
     def _on_srv_frame_configure(e):
         srv_canvas.configure(scrollregion=srv_canvas.bbox("all"))
-        if self.srv_buttons_frame.winfo_reqheight() > srv_canvas.winfo_height():
-            srv_scrollbar.pack(side="right", fill="y")
-        else:
-            srv_scrollbar.pack_forget()
     
     def _on_srv_canvas_configure(e):
         srv_canvas.itemconfig(canvas_window, width=e.width)

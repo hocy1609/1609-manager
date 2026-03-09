@@ -15,7 +15,7 @@ class LogMonitor:
 
     def __init__(
         self,
-        log_path: str,
+        log_paths: list[str],
         keywords: list[str],
         webhooks: list[str],
         on_error=None,
@@ -26,7 +26,7 @@ class LogMonitor:
         mention_here: bool = False,
         mention_everyone: bool = False,
     ):
-        self.log_path = log_path
+        self.log_paths = set(log_paths) if log_paths else set()
         self.keywords = keywords or []
         self.webhooks = webhooks or []
         self.on_error = on_error
@@ -39,7 +39,7 @@ class LogMonitor:
 
         self._thread: threading.Thread | None = None
         self._running = False
-        self._position = 0
+        self._positions = {}
 
     # --- управление потоком ---
 
@@ -50,10 +50,11 @@ class LogMonitor:
         # При запуске считаем, что ранее существующие записи нас не интересуют.
         # Устанавливаем позицию чтения в конец файла, чтобы обрабатывать только новые строки.
         try:
-            if self.log_path and os.path.exists(self.log_path):
-                self._position = os.path.getsize(self.log_path)
-            else:
-                self._position = 0
+            for path in list(self.log_paths):
+                if path and os.path.exists(path):
+                    self._positions[path] = os.path.getsize(path)
+                else:
+                    self._positions[path] = 0
         except Exception as e:
             if self.on_error:
                 self.on_error(e)
@@ -78,7 +79,7 @@ class LogMonitor:
 
     def update_config(
         self,
-        log_path: str | None = None,
+        log_paths: list[str] | None = None,
         keywords: list[str] | None = None,
         webhooks: list[str] | None = None,
         mention_here: bool | None = None,
@@ -86,11 +87,15 @@ class LogMonitor:
     ):
         """
         Обновить настройки «на лету» (путь, ключевые слова, вебхуки).
-        При смене пути сбрасываем позицию чтения.
+        При добавлении новых путей сбрасываем позицию чтения для них.
         """
-        if log_path is not None and log_path != self.log_path:
-            self.log_path = log_path
-            self._position = 0
+        if log_paths is not None:
+            new_paths = set(log_paths)
+            if new_paths != self.log_paths:
+                for path in new_paths:
+                    if path not in self.log_paths:
+                        self._positions[path] = os.path.getsize(path) if os.path.exists(path) else 0
+                self.log_paths = new_paths
         if keywords is not None:
             self.keywords = keywords
         if webhooks is not None:
@@ -103,7 +108,7 @@ class LogMonitor:
     # --- основная логика чтения файла ---
 
     def _run(self):
-        print(f"LogMonitor: Start watching {self.log_path}")
+        print(f"LogMonitor: Start watching {self.log_paths}")
         
         # Boost thread priority on Windows for faster response in slayer mode
         try:
@@ -117,44 +122,46 @@ class LogMonitor:
             pass
         
         while self._running:
-            try:
-                if not self.log_path or not os.path.exists(self.log_path):
-                    time.sleep(0.5 if self.slayer_mode else 1.0)
-                    continue
+            for log_path in list(self.log_paths):
+                try:
+                    if not log_path or not os.path.exists(log_path):
+                        continue
 
-                size = os.path.getsize(self.log_path)
-                if size < self._position:
-                    self._position = 0
+                    size = os.path.getsize(log_path)
+                    pos = self._positions.get(log_path, 0)
+                    if size < pos:
+                        pos = 0
 
-                # ОБЯЗАТЕЛЬНО cp1251 для русских логов
-                with open(self.log_path, "r", encoding="cp1251", errors="replace") as f:
-                    f.seek(self._position)
+                    # ОБЯЗАТЕЛЬНО cp1251 для русских логов
+                    with open(log_path, "r", encoding="cp1251", errors="replace") as f:
+                        f.seek(pos)
 
-                    # Читаем новые строки
-                    while True:
-                        line = f.readline()
-                        if not line:
-                            break
-                        if not line.endswith('\n'):
-                            # Incomplete line yet, revert position and wait
-                            f.seek(self._position)
-                            break
-                        
-                        try:
-                            # Debug log for tracing keywords
-                            from datetime import datetime
-                            with open("1609_manager_monitor_debug.log", "a", encoding="utf-8") as d:
-                                d.write(f"[{datetime.now()}] READ: {line.rstrip(chr(10))}\n")
-                                d.write(f"  KEYWORDS: {self.keywords}\n")
-                        except Exception:
-                            pass
+                        # Читаем новые строки
+                        while True:
+                            line = f.readline()
+                            if not line:
+                                break
+                            if not line.endswith('\n'):
+                                # Incomplete line yet, revert position and wait
+                                f.seek(pos)
+                                break
                             
-                        self._handle_line(line.rstrip("\n"))
-                        self._position = f.tell()
-            except Exception as e:
-                print(f"LogMonitor Error: {e}")
-                if self.on_error:
-                    self.on_error(e)
+                            try:
+                                # Debug log for tracing keywords
+                                from datetime import datetime
+                                with open("1609_manager_monitor_debug.log", "a", encoding="utf-8") as d:
+                                    d.write(f"[{datetime.now()}] READ ({os.path.basename(os.path.dirname(log_path))}): {line.rstrip(chr(10))}\n")
+                                    d.write(f"  KEYWORDS: {self.keywords}\n")
+                            except Exception:
+                                pass
+                                
+                            self._handle_line(line.rstrip("\n"))
+                            pos = f.tell()
+                        self._positions[log_path] = pos
+                except Exception as e:
+                    print(f"LogMonitor Error: {e}")
+                    if self.on_error:
+                        self.on_error(e)
 
             # Slayer mode: poll every 50ms for instant reaction, otherwise 1 second
             time.sleep(0.05 if self.slayer_mode else 1.0)

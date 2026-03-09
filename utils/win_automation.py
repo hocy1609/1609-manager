@@ -264,16 +264,11 @@ def _setup_input_blocking(hwnd: int, abs_coords: list, margin: int | None):
             cur = POINT(0, 0)
             user32.GetCursorPos(ctypes.byref(cur))
             
-            m = margin if margin is not None else 48
-            all_x = [cur.x] + [c[0] for c in abs_coords]
-            all_y = [cur.y] + [c[1] for c in abs_coords]
-            
-            left, top = min(all_x) - m, min(all_y) - m
-            right, bottom = max(all_x) + m, max(all_y) + m
-            
-            # Clamp to screen
-            sx, sy = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-            clip_rect = RECT(max(0, int(left)), max(0, int(top)), min(sx, int(right)), min(sy, int(bottom)))
+            if abs_coords:
+                target_x, target_y = abs_coords[0]
+                clip_rect = RECT(target_x, target_y, target_x + 1, target_y + 1)
+            else:
+                clip_rect = RECT(cur.x, cur.y, cur.x + 1, cur.y + 1)
             
             if user32.ClipCursor(ctypes.byref(clip_rect)):
                 state["clipped"] = True
@@ -302,11 +297,19 @@ def _send_one_esc(speed: float):
 
 def _perform_click(x: int, y: int, speed: float, hwnd: int = None):
     """Click at coordinates using SendInput with fallback to PostMessage."""
+    # Temporarily trap the cursor to exact target so user can't disrupt it
+    temp_clip = RECT(x, y, x + 1, y + 1)
+    old_clip = RECT()
+    has_old = user32.GetClipCursor(ctypes.byref(old_clip))
+    if has_old:
+        user32.ClipCursor(ctypes.byref(temp_clip))
+
     user32.SetCursorPos(x, y)
     time.sleep(0.12 * speed)
     
     # 1. SendInput click
     try:
+        user32.SetCursorPos(x, y) # Re-assert position
         _info = ctypes.c_ulonglong(0)
         mi_down = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=_info)
         mi_up = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=_info)
@@ -328,6 +331,9 @@ def _perform_click(x: int, y: int, speed: float, hwnd: int = None):
             user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
         except Exception:
             pass
+
+    if has_old:
+        user32.ClipCursor(ctypes.byref(old_clip))
 
 
 def safe_exit_sequence(
@@ -361,6 +367,18 @@ def safe_exit_sequence(
     _prepare_window_for_automation(pid, hwnd, _speed)
     blocking = _setup_input_blocking(hwnd, [abs_exit, abs_conf], clip_margin)
 
+    # 0. Setup pynput mouse suppression
+    mouse_listener = None
+    try:
+        from pynput.mouse import Listener
+        def on_move(x, y): pass
+        def on_click(x, y, button, pressed): pass
+        def on_scroll(x, y, dx, dy): pass
+        mouse_listener = Listener(on_move=on_move, on_click=on_click, on_scroll=on_scroll, suppress=True)
+        mouse_listener.start()
+    except Exception as e:
+        print(f"Pynput mouse suppression failed: {e}")
+
     try:
         # 1. Send ESC sequence
         for _ in range(max(1, params["esc_count"])):
@@ -393,6 +411,9 @@ def safe_exit_sequence(
             except Exception:
                 try: user32.ClipCursor(None)
                 except Exception: pass
+        if mouse_listener:
+            try: mouse_listener.stop()
+            except Exception: pass
 
 
 # === UTILS ===

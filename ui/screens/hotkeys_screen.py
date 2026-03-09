@@ -116,7 +116,21 @@ def build_hotkeys_screen(app):
     canvas.bind("<Configure>", _on_canvas_configure)
 
     canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
+
+    # Mousewheel scrolling
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def bind_mousewheel(widget):
+        widget.bind("<MouseWheel>", _on_mousewheel)
+        for child in widget.winfo_children():
+            bind_mousewheel(child)
+
+    canvas.bind("<MouseWheel>", _on_mousewheel)
+    self.hotkeys_list_frame.bind("<MouseWheel>", _on_mousewheel)
+
+    # Recursive bind for mousewheel
+    self.root.after(100, lambda: bind_mousewheel(hotkeys_frame))
 
     def _refresh_hotkeys_list():
         for widget in self.hotkeys_list_frame.winfo_children():
@@ -164,6 +178,8 @@ def build_hotkeys_screen(app):
                 tk.Label(info_f, text=comment, bg=COLORS["bg_panel"], fg=COLORS["fg_dim"], font=("Segoe UI", 8)).pack(anchor="w")
 
             # Actions
+            ModernButton(row, COLORS["bg_input"], COLORS["accent"], text="Edit", width=8, 
+                         command=lambda idx=i: _edit_bind(idx)).pack(side="right", padx=(5, 0))
             ModernButton(row, COLORS["bg_input"], COLORS["danger"], text="Delete", width=8, 
                          command=lambda idx=i: _delete_bind(idx)).pack(side="right")
 
@@ -179,8 +195,43 @@ def build_hotkeys_screen(app):
             self._apply_saved_hotkeys()
             _refresh_hotkeys_list()
 
+    def _edit_bind(idx):
+        from ui.dialogs.hotkey_dialog import HotkeyDialog
+        from core.keybind_manager import HotkeyAction
+        if isinstance(hotkeys_cfg, dict):
+            binds = hotkeys_cfg.get("binds", [])
+        else:
+            binds = hotkeys_cfg.binds
+
+        def on_save(updated_data):
+            if isinstance(binds[idx], dict):
+                binds[idx].update(updated_data)
+            else:
+                binds[idx] = HotkeyAction.from_dict(updated_data)
+            self.save_data()
+            self._apply_saved_hotkeys()
+            _refresh_hotkeys_list()
+            
+        HotkeyDialog(self.root, is_new=False, hotkey_data=binds[idx], on_save=on_save)
+
     def _add_hotkey():
-        messagebox.showinfo("Hotkeys", "Use the Macro Recorder or hotkey dialog to add new binds.")
+        from ui.dialogs.hotkey_dialog import HotkeyDialog
+        from core.keybind_manager import HotkeyAction
+        if isinstance(hotkeys_cfg, dict):
+            binds = hotkeys_cfg.setdefault("binds", [])
+        else:
+            binds = hotkeys_cfg.binds
+
+        def on_save(new_data):
+            if isinstance(hotkeys_cfg, dict):
+                binds.append(new_data)
+            else:
+                binds.append(HotkeyAction.from_dict(new_data))
+            self.save_data()
+            self._apply_saved_hotkeys()
+            _refresh_hotkeys_list()
+            
+        HotkeyDialog(self.root, is_new=True, on_save=on_save)
 
     # Bottom Actions
     bottom = tk.Frame(hotkeys_frame, bg=COLORS["bg_root"])

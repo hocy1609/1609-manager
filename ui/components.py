@@ -129,6 +129,55 @@ class StatusBar:
         self.resize_grip.bind("<Button-1>", self._start_resize)
         self.resize_grip.bind("<B1-Motion>", self._do_resize)
         
+        # Save State button (Right-aligned, before resize grip)
+        self.save_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"], cursor="hand2")
+        self.save_frame.pack(side="right", padx=(10, 5), pady=4)
+        
+        self._save_icon = tk.Label(
+            self.save_frame,
+            text="\uE74E",  # Save icon (Floppy disk) in Segoe Fluent
+            bg=COLORS["bg_panel"],
+            fg=COLORS["accent"],
+            font=("Segoe Fluent Icons", 11),
+            cursor="hand2"
+        )
+        self._save_icon.pack(side="left")
+        
+        self.labels["save_state"] = tk.Label(
+            self.save_frame,
+            text="Save State",
+            bg=COLORS["bg_panel"],
+            fg=COLORS["fg_text"],
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2"
+        )
+        self.labels["save_state"].pack(side="left", padx=(3, 0))
+        
+        def _trigger_save(e=None):
+            try:
+                if hasattr(self.app, 'save_data'):
+                    self.app.save_data()
+                    # Visual feedback
+                    self.labels["save_state"].config(text="Saved!", fg=COLORS["success"])
+                    self._save_icon.config(fg=COLORS["success"])
+                    
+                    # Reset after 2 seconds
+                    def _reset():
+                        try:
+                            self.labels["save_state"].config(text="Save State", fg=COLORS["fg_text"])
+                            self._save_icon.config(fg=COLORS["accent"])
+                        except Exception:
+                            pass
+                    self.app.root.after(2000, _reset)
+            except Exception as ex:
+                self.labels["save_state"].config(text="Error", fg=COLORS["danger"])
+                self._save_icon.config(fg=COLORS["danger"])
+                print(f"[StatusBar] Save Error: {ex}")
+                
+        self.save_frame.bind("<Button-1>", _trigger_save)
+        self._save_icon.bind("<Button-1>", _trigger_save)
+        self.labels["save_state"].bind("<Button-1>", _trigger_save)
+        
         # Left side: Sessions count - split into icon + text for proper font rendering
         left_frame = tk.Frame(self.frame, bg=COLORS["bg_panel"])
         left_frame.pack(side="left", padx=15, pady=4)

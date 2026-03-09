@@ -165,7 +165,7 @@ class HotkeyBind:
 @dataclass
 class HotkeysConfig:
     enabled: bool = False
-    master_toggle_key: str = "ALT+S"
+    master_toggle_key: str = "CTRL+SHIFT+S"
     binds: List[HotkeyBind] = field(default_factory=list)
 
     @classmethod
@@ -176,7 +176,7 @@ class HotkeysConfig:
         binds_raw = _clean_list(data.get("binds", []))
         return cls(
             enabled=_clean_bool(data.get("enabled", False)),
-            master_toggle_key=_clean_str(data.get("master_toggle_key", "ALT+S")) or "ALT+S",
+            master_toggle_key=_clean_str(data.get("master_toggle_key", "CTRL+SHIFT+S")) or "CTRL+SHIFT+S",
             binds=[HotkeyBind.from_dict(b) for b in binds_raw],
         )
 
@@ -222,6 +222,7 @@ class LogMonitorConfig:
     spy_enabled: bool = False
     mention_here: bool = False
     mention_everyone: bool = False
+    spy_profiles: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LogMonitorConfig":
@@ -242,6 +243,7 @@ class LogMonitorConfig:
             spy_enabled=_clean_bool(data.get("spy_enabled", False)),
             mention_here=_clean_bool(data.get("mention_here", False)),
             mention_everyone=_clean_bool(data.get("mention_everyone", False)),
+            spy_profiles=[_clean_str(p) for p in _clean_list(data.get("spy_profiles", []))],
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -292,6 +294,7 @@ class Settings:
     # User-defined category order (list of category names)
     category_order: List[str] = field(default_factory=list)
     disable_hotkeys_on_multi_session: bool = False
+    collapsed_categories: List[str] = field(default_factory=list)
 
     @classmethod
     def defaults(cls, docs: str, exe: str) -> "Settings":
@@ -370,6 +373,7 @@ class Settings:
             run_on_startup=_clean_bool(data.get("run_on_startup", False)),
             category_order=[_clean_str(c) for c in _clean_list(data.get("category_order", []))],
             disable_hotkeys_on_multi_session=_clean_bool(data.get("disable_hotkeys_on_multi_session", False)),
+            collapsed_categories=[_clean_str(c) for c in _clean_list(data.get("collapsed_categories", []))],
         )
 
     def to_dict(self) -> Dict[str, Any]:

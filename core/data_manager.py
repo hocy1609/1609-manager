@@ -204,6 +204,10 @@ class DataManager:
         # Store settings for easier access by other components
         self.app.settings = settings
         
+        # Sync collapsed categories to profile manager
+        if hasattr(self.app, 'profile_manager'):
+            self.app.profile_manager.collapsed_categories = set(settings.collapsed_categories)
+        
         # Auto-import key from cdkey.ini if no saved keys exist
         if not self.app.saved_keys:
             cdkey_path = os.path.join(doc_path, "nwncdkey.ini")
@@ -262,6 +266,7 @@ class DataManager:
                 theme=getattr(self.app, "theme", "dark"),
                 category_order=getattr(self.app, "category_order", []),
                 disable_hotkeys_on_multi_session=getattr(self.app.settings, "disable_hotkeys_on_multi_session", False),
+                collapsed_categories=list(self.app.profile_manager.collapsed_categories) if hasattr(self.app, "profile_manager") else [],
             )
             
             # Sync startup registry (failsafe)

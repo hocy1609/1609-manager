@@ -7,3 +7,4 @@ from .backup_dialog import RestoreBackupDialog
 from .log_dialog import LogMonitorDialog
 from .key_dialog import KeyManagerDialog
 from .selective_restore_dialog import SelectiveRestoreDialog
+from .hotkey_dialog import HotkeyDialog

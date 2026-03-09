@@ -114,15 +114,82 @@ class LogMonitorManager:
         self._handle_open_wounds_detection(line)
         self._handle_auto_fog_detection(line)
 
+    def _get_active_log_paths(self) -> list[str]:
+        import os
+        import re
+        paths = set()
+        try:
+            spy_profiles = self.app.log_monitor_state.config.get("spy_profiles", [])
+            
+            # If nothing is selected, monitor nothing (per user's requested behavior)
+            if not spy_profiles:
+                return []
+                
+            global_doc = self.app.doc_path_var.get()
+            if hasattr(self.app, 'sessions') and self.app.sessions.sessions:
+                for cdkey in self.app.sessions.sessions.keys():
+                    prof_name = self.app.controller_profile_by_cdkey.get(cdkey)
+                    if prof_name and prof_name in spy_profiles:
+                        # Find the actual profile object to get its playerName (dir name)
+                        prof = next((p for p in self.app.profiles if p.name == prof_name), None)
+                        if prof:
+                            dir_name = prof.playerName
+                            safe_dir = re.sub(r'[<>:"/\\|?*]', '_', dir_name)
+                            log_path = os.path.join(global_doc, "profiles", safe_dir, "logs", "nwclientLog1.txt")
+                            paths.add(log_path)
+        except Exception as e:
+            self.app.log_error("_get_active_log_paths", e)
+            
+        # Fallback to main log from config if needed
+        try:
+            main_log = self.app.log_monitor_state.config.get("log_path")
+            if main_log:
+                paths.add(main_log)
+        except Exception:
+            pass
+            
+        return list(paths)
+
+    def on_sessions_changed(self, current_count=None, previous_count=None):
+        """Called by app.py when active game sessions count changes."""
+        state = getattr(self.app, "log_monitor_state", None)
+        if not state: return
+        
+        # 1. Auto-enable Spy Mode if a monitored profile is now running
+        # Only check if Spy is currently disabled
+        spy_enabled = state.config.get("spy_enabled", False)
+        if not spy_enabled:
+            spy_profiles = state.config.get("spy_profiles", [])
+            if spy_profiles and hasattr(self.app, 'sessions') and self.app.sessions.sessions:
+                import re
+                has_monitored_active = False
+                for cdkey in self.app.sessions.sessions.keys():
+                    prof_name = self.app.controller_profile_by_cdkey.get(cdkey)
+                    if prof_name and prof_name in spy_profiles:
+                        has_monitored_active = True
+                        break
+                
+                if has_monitored_active:
+                    print(f"[Auto] Monitored profile detected among active sessions. Enabling Spy Mode...")
+                    self.toggle_spy_enabled(True)
+                    # toggle_spy_enabled calls start_log_monitor which updates config, so we can return
+                    return
+
+        # 2. If spy or slayer is on and monitor is running, update its active log paths dynamically
+        if state.monitor and state.monitor.is_running():
+            active_paths = self._get_active_log_paths()
+            state.monitor.update_config(log_paths=active_paths)
+
     def ensure_log_monitor(self):
         """Create or update LogMonitor object based on current config."""
         state = self.app.log_monitor_state
         spy_on = state.config.get("spy_enabled", False)
         auto_on = state.config.get("enabled", False)
+        active_paths = self._get_active_log_paths()
         
         if not state.monitor:
             state.monitor = LogMonitor(
-                state.config["log_path"],
+                active_paths,
                 state.config["keywords"],
                 state.config["webhooks"],
                 on_error=lambda e: self.app.log_error("LogMonitor", e),
@@ -139,7 +206,7 @@ class LogMonitorManager:
             state.monitor.set_slayer_mode(state.open_wounds_enabled_var.get() if state.open_wounds_enabled_var else False)
             state.monitor.set_spy_enabled(spy_on)
             state.monitor.update_config(
-                log_path=state.config["log_path"],
+                log_paths=active_paths,
                 keywords=state.config["keywords"],
                 webhooks=state.config["webhooks"],
                 mention_here=state.mention_here_var.get() if state.mention_here_var else False,
@@ -411,3 +478,76 @@ class LogMonitorManager:
             try: self.app.root.after_cancel(self._lm_save_after_id)
             except Exception: pass
         self._lm_save_after_id = self.app.root.after(delay_ms, self._save_config)
+
+    def backup_all_logs(self):
+        """Find and backup logs for all profiles and the global log."""
+        import os
+        import re
+        
+        try:
+            global_doc = self.app.doc_path_var.get()
+            profiles = getattr(self.app, 'profiles', [])
+            
+            # 1. Backup all profile logs
+            for prof in profiles:
+                # Some profiles might be dicts, handle both
+                prof_name = prof.playerName if hasattr(prof, 'playerName') else prof.get('playerName', '')
+                if not prof_name: continue
+                
+                safe_name = re.sub(r'[<>:"/\\|?*]', '_', prof_name)
+                log_path = os.path.join(global_doc, "profiles", safe_name, "logs", "nwclientLog1.txt")
+                
+                if os.path.exists(log_path):
+                    self._backup_single_log(log_path)
+            
+            # 2. Backup main log from config if it exists
+            main_log = self.app.log_monitor_state.config.get("log_path")
+            if main_log and os.path.exists(main_log) and not os.path.isdir(main_log):
+                self._backup_single_log(main_log)
+                
+        except Exception as e:
+            self.app.log_error("backup_all_logs", e)
+
+    def _backup_single_log(self, log_path: str):
+        """Backup a single log file to logs_old folder and keep only last 10."""
+        import os
+        import shutil
+        from datetime import datetime
+        
+        try:
+            log_dir = os.path.dirname(log_path)
+            old_logs_dir = os.path.join(log_dir, "logs_old")
+            
+            # Check if we have write access and create dir if needed
+            if not os.path.exists(old_logs_dir):
+                os.makedirs(old_logs_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_name = os.path.basename(log_path)
+            name, ext = os.path.splitext(base_name)
+            backup_name = f"{timestamp}_{name}{ext}"
+            backup_path = os.path.join(old_logs_dir, backup_name)
+            
+            # Copy file (using copy2 to preserve metadata)
+            try:
+                shutil.copy2(log_path, backup_path)
+            except (PermissionError, IOError):
+                # If file is locked (game running), try simple copy which might still fail
+                shutil.copy(log_path, backup_path)
+            
+            # Cleanup: keep 10 latest
+            files = [os.path.join(old_logs_dir, f) for f in os.listdir(old_logs_dir)]
+            # Filter to only our timestamped backups for this specific log name to be safe
+            files = [f for f in files if f.endswith(f"_{base_name}")]
+            
+            files.sort(key=os.path.getmtime, reverse=True)
+            
+            for f in files[10:]:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+        except Exception as e:
+            # Don't swarm with errors if backup fails (e.g. read-only folder)
+            print(f"Log backup failed for {log_path}: {e}")
+            pass

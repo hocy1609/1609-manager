@@ -14,6 +14,27 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+if not is_admin():
+    # Re-run with admin rights
+    # We must properly quote sys.executable and arguments
+    script = os.path.abspath(sys.argv[0])
+    # If running the python script rather than a PyInstaller exe
+    if script.endswith('.py') or script.endswith('.pyw'):
+        params = ' '.join([f'"{arg}"' for arg in sys.argv])
+        executable = sys.executable
+    else:
+        params = ' '.join([f'"{arg}"' for arg in sys.argv[1:]])
+        executable = sys.argv[0]
+    
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, params, None, 1)
+    sys.exit()
+
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
@@ -137,6 +158,7 @@ class NWNManagerApp:
     tray_manager: TrayManager
     theme_manager: ThemeManager
     settings: Settings
+    controller_profile_by_cdkey: dict[str, str]
     
     # State attributes initialized in ui_state.py or load_data
     doc_path_var: tk.StringVar
@@ -437,6 +459,9 @@ class NWNManagerApp:
                 return
         
         # Fallback: actually close
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.backup_all_logs()
+            
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.close_app_window()
     
@@ -444,6 +469,8 @@ class NWNManagerApp:
         """Force quit the application (from tray menu)."""
         if hasattr(self, 'tray_manager'):
             self.tray_manager.stop()
+        if hasattr(self, "log_monitor_manager"):
+            self.log_monitor_manager.backup_all_logs()
         if hasattr(self, "ui_state_manager"):
             self.ui_state_manager.close_app_window()
 
@@ -860,7 +887,7 @@ class NWNManagerApp:
                         actions.append(HotkeyAction(
                             trigger=b.trigger,
                             sequence=b.sequence,
-                            right_click=b.rightClick,
+                            right_click=getattr(b, "rightClick", getattr(b, "right_click", False)),
                             comment=b.comment,
                             enabled=b.enabled
                         ))
@@ -1158,6 +1185,13 @@ class NWNManagerApp:
             self._last_session_count = current_count
             self.refresh_list()
             
+            # Update log monitor tracked files
+            if hasattr(self, "log_monitor_manager"):
+                try:
+                    self.log_monitor_manager.on_sessions_changed(current_count, previous_count)
+                except Exception as e:
+                    self.log_error("monitor_processes.on_sessions_changed", e)
+            
             # Sessions appeared (went from 0 to >0) - auto-enable features
             if current_count > 0 and previous_count == 0:
                 print(f"[Monitor] Game session started! Auto-enabling features...")
@@ -1241,8 +1275,12 @@ class NWNManagerApp:
                     for prof in self.profiles:
                         if prof.cdKey == current_key:
                             # Add to sessions and refresh UI
+                            # Add to sessions and refresh UI
                             try:
                                 self.sessions.add(current_key, pid)
+                                # Populate controller mapping for detected session
+                                if hasattr(self, 'controller_profile_by_cdkey'):
+                                    self.controller_profile_by_cdkey[current_key] = prof.name
                             except Exception:
                                 logging.exception("Unhandled exception")
                             try:
@@ -1251,6 +1289,15 @@ class NWNManagerApp:
                             except Exception:
                                 logging.exception("Unhandled exception")
                             return
+            
+            # Reconstruction for sessions already in self.sessions (loaded from settings)
+            if hasattr(self, 'controller_profile_by_cdkey'):
+                for key in list(self.sessions.sessions.keys()):
+                    if key not in self.controller_profile_by_cdkey:
+                        found_p = next((p for p in self.profiles if p.cdKey == key), None)
+                        if found_p:
+                            self.controller_profile_by_cdkey[key] = found_p.name
+                            
         except Exception as e:
             self.log_error("detect_existing_session.tasklist", e)
 
@@ -1262,7 +1309,7 @@ class NWNManagerApp:
             try:
                 cdkey = self.current_profile.cdKey
                 controller = self.controller_profile_by_cdkey.get(cdkey)
-                if controller and controller != self.current_profile.playerName:
+                if controller and controller != self.current_profile.name:
                     # Не управляющий профиль: убрать и play, и ctrl_frame.
                     if hasattr(self, 'btn_play'):
                         try:
@@ -1391,10 +1438,25 @@ class NWNManagerApp:
         if hasattr(self, 'profile_manager'):
             self.profile_manager._inline_delete_profile()
 
+    def on_category_expanded(self, event):
+        """Delegate to ProfileManager."""
+        if hasattr(self, 'profile_manager'):
+            self.profile_manager.on_category_expanded(event)
+
+    def on_category_collapsed(self, event):
+        """Delegate to ProfileManager."""
+        if hasattr(self, 'profile_manager'):
+            self.profile_manager.on_category_collapsed(event)
+
     def on_drag_start(self, event):
         """Delegate to ProfileManager."""
         if hasattr(self, 'profile_manager'):
             return self.profile_manager.on_drag_start(event)
+
+    def on_drag_motion(self, event):
+        """Delegate to ProfileManager."""
+        if hasattr(self, 'profile_manager'):
+            self.profile_manager.on_drag_motion(event)
 
     def on_drag_drop(self, event):
         """Delegate to ProfileManager."""
@@ -1499,6 +1561,79 @@ class NWNManagerApp:
         finally:
             self._processing_launch_queue = False
 
+    def _prepare_profile_dir(self, global_doc, profile):
+        """Creates an isolated -userDirectory for the profile."""
+        import shutil
+        import re
+        import stat
+        from utils.win_automation import safe_replace
+        
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', profile.playerName) if profile.playerName else "Unknown"
+        profile_dir = os.path.join(global_doc, "profiles", safe_name)
+        os.makedirs(os.path.join(profile_dir, "logs"), exist_ok=True)
+        
+        for file in ["nwn.ini", "nwnplayer.ini", "settings.tml", "userprofile.ini"]:
+            src = os.path.join(global_doc, file)
+            dst = os.path.join(profile_dir, file)
+            if os.path.exists(src) and not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                except Exception as e:
+                    self.log_error(f"_prepare_profile_dir.copy_{file}", e)
+                    
+        content = f"[NWN1]\nYourKey={profile.cdKey}\n"
+        for ini_name in ["nwncdkey.ini", "cdkey.ini"]:
+            p = os.path.join(profile_dir, ini_name)
+            if os.path.exists(p):
+                os.chmod(p, stat.S_IWRITE)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(content)
+            safe_replace(tmp, p)
+
+        tml_path = os.path.join(profile_dir, "settings.tml")
+        if os.path.exists(tml_path):
+            os.chmod(tml_path, stat.S_IWRITE)
+            robust_update_settings_tml(tml_path, profile.playerName)
+        
+        nwn_ini = os.path.join(profile_dir, "nwn.ini")
+        if os.path.exists(nwn_ini):
+            try:
+                lines = []
+                with open(nwn_ini, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
+                
+                out_lines = []
+                in_alias = False
+                for line in lines:
+                    if line.strip().lower() == "[alias]":
+                        in_alias = True
+                        continue
+                    if in_alias and line.strip().startswith("["):
+                        in_alias = False
+                    if not in_alias:
+                        out_lines.append(line)
+                        
+                if out_lines and not out_lines[-1].endswith("\n"):
+                    out_lines[-1] += "\n"
+                    
+                aliases = [
+                    "HD0", "MODULES", "SAVES", "OVERRIDE", "HAK", "SCREENSHOTS", "CURRENTGAME", 
+                    "TEMP", "TEMPCLIENT", "LOCALVAULT", "DMVAULT", "SERVERVAULT", "DATABASE", "PORTRAITS", 
+                    "AMBIENT", "MOVIES", "MUSIC", "TLK", "DEVELOPMENT", "PATCH", 
+                    "OLDSERVERVAULT", "NWSYNC", "CACHE", "MODELCOMPILER", "CRASHREPORT"
+                ]
+                with open(nwn_ini, 'w', encoding='utf-8') as f:
+                    f.writelines(out_lines)
+                    f.write("\n[Alias]\n")
+                    f.write(f"LOGS={os.path.join(profile_dir, 'logs')}\n")
+                    for alias in aliases:
+                        f.write(f"{alias}={os.path.join(global_doc, alias.lower())}\n")
+            except Exception as e:
+                self.log_error("_prepare_profile_dir.nwn.ini", e)
+                
+        return profile_dir
+
     def launch_game(self, profile=None):
         import subprocess
 
@@ -1518,35 +1653,18 @@ class NWNManagerApp:
         key = target_profile.cdKey
 
         try:
-            content = f"[NWN1]\nYourKey={key}\n"
-            for ini_name in ["nwncdkey.ini", "cdkey.ini"]:
-                p = os.path.join(doc, ini_name)
-                if os.path.exists(p):
-                    os.chmod(p, stat.S_IWRITE)
-                    tmp = p + ".tmp"
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    from utils.win_automation import safe_replace
-
-                    safe_replace(tmp, p)
-
-            tml_path = os.path.join(doc, "settings.tml")
-            if os.path.exists(tml_path):
-                os.chmod(tml_path, stat.S_IWRITE)
-            robust_update_settings_tml(
-                tml_path, target_profile.playerName
-            )
+            profile_dir = self._prepare_profile_dir(doc, target_profile)
         except Exception as e:
-            self.log_error("launch_game.file_update", e)
+            self.log_error("launch_game.prepare_profile_dir", e)
             if not profile: # Only show error dialog if manual single launch
                 messagebox.showerror(
-                    "File Error",
-                    f"Could not update files:\n{e}",
+                    "Profile Setup Error",
+                    f"Could not setup profile directory:\n{e}",
                     parent=self.root,
                 )
             return
 
-        cmd = [exe]
+        cmd = [exe, "-userDirectory", profile_dir]
 
         if self.use_server_var.get():
             # If we are launching a specific profile, we might want to use its saved server
@@ -1572,7 +1690,7 @@ class NWNManagerApp:
             # Назначаем контролирующий профиль для ключа, если еще не назначен.
             try:
                 if key not in self.controller_profile_by_cdkey:
-                    self.controller_profile_by_cdkey[key] = target_profile.playerName
+                    self.controller_profile_by_cdkey[key] = target_profile.name
             except Exception:
                 logging.exception("Unhandled exception")
             
@@ -1593,11 +1711,28 @@ class NWNManagerApp:
         self.close_game_for_profile(self.current_profile)
 
     def close_game_for_profile(self, profile):
-        """Close a specific profile's game session."""
+        """Close a specific profile's game session sequentially to avoid overlapping macro issues."""
         key = getattr(profile, "cdKey", None)
         if not key or key not in self.sessions.sessions:
             return
         pid = self.sessions.sessions[key]
+
+        if not hasattr(self, '_close_queue'):
+            self._close_queue = []
+            self._closing_active = False
+
+        self._close_queue.append((profile, pid))
+        
+        if not self._closing_active:
+            self._process_close_queue()
+
+    def _process_close_queue(self):
+        if not self._close_queue:
+            self._closing_active = False
+            return
+            
+        self._closing_active = True
+        profile, pid = self._close_queue.pop(0)
 
         def _safe_exit_wrapper():
             try:
@@ -1648,6 +1783,9 @@ class NWNManagerApp:
                 self.root.after(0, self.update_launch_buttons)
             except Exception:
                 logging.exception("Unhandled exception")
+                
+            # Process next in queue
+            self.root.after(100, self._process_close_queue)
 
         threading.Thread(target=_safe_exit_wrapper, daemon=True).start()
         # остановим монитор при закрытии

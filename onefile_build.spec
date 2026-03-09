@@ -40,6 +40,7 @@ hidden_imports.append('pystray.backend.win32')
 hidden_imports.append('PIL')
 hidden_imports.append('PIL.Image')
 hidden_imports.append('PIL.ImageDraw')
+hidden_imports.append('pynput')
 
 a = Analysis(
     ['app.py'],
@@ -82,5 +83,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    uac_admin=True,
     icon=os.path.join('Assets', 'logo.ico')
 )

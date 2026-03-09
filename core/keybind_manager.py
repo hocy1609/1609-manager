@@ -436,10 +436,14 @@ class MultiHotkeyManager:
                             break
                     except (ValueError, TypeError):
                         continue
+                # Restore per-profile check: 
+                # If any profile has hotkey_on=True, only allow hotkeys on that specific profile.
+                # If no profiles have hotkey_on=True, allow hotkeys on any active session.
+                profiles = getattr(self.app, 'profiles', [])
+                any_profile_has_hotkeys = any(p.hotkey_on for p in profiles)
                 
-                # Per-profile check removed to allow global hotkeys to function 
-                # as long as any NWN session is focused and master toggle is ON.
-                pass
+                if any_profile_has_hotkeys:
+                    is_nwn_focused = is_nwn_focused and focused_profile is not None and focused_profile.hotkey_on
 
             # Ensure hotkeys only fire when their profile is actually focused
             if not is_nwn_focused:

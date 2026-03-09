@@ -40,7 +40,7 @@ class ProfileManager:
         else:
             self.service = None  # Will be initialized after app finishes setup
         
-        self.collapsed_categories = set()
+        self.collapsed_categories = set(getattr(self.app.settings, 'collapsed_categories', [])) if hasattr(self.app, 'settings') else set()
         
         # State for inline actions
         self._hover_item_id = None
@@ -90,6 +90,12 @@ class ProfileManager:
         tree.tag_configure(
             "hover",
             background=COLORS.get("bg_input", "#2E333D")
+        )
+        # Running state: Green text to indicate active game session
+        tree.tag_configure(
+            "running",
+            foreground=COLORS.get("running_indicator", "#95D5B2"),
+            background=COLORS.get("running_bg", "#233D30")
         )
         
         # Get user-defined category order or build from existing categories
@@ -146,7 +152,8 @@ class ProfileManager:
                 continue
 
             # Create category node
-            cat_id = tree.insert("", "end", text=cat, open=True, tags=("category",))
+            is_open = cat not in self.collapsed_categories
+            cat_id = tree.insert("", "end", text=cat, open=is_open, tags=("category",))
             
             for i, p in enumerate(cat_profiles):
                 # Prepare display text: only profile name, no login name in parentheses
@@ -162,6 +169,10 @@ class ProfileManager:
                 profile_tags = ["profile"]
                 if i % 2 == 1:
                     profile_tags.append("alt")
+                    
+                # Check if profile is running
+                if p.cdKey and p.cdKey in getattr(self.app.sessions, 'sessions', {}):
+                    profile_tags.append("running")
                 
                 # Insert profile node
                 p_id = tree.insert(cat_id, "end", text=display_text, tags=tuple(profile_tags))
@@ -310,7 +321,18 @@ class ProfileManager:
                         p.category = new_name
                         changed = True
                 if changed:
+                    if hasattr(self.app, 'category_order') and old_name in self.app.category_order:
+                        idx = self.app.category_order.index(old_name)
+                        self.app.category_order[idx] = new_name
                     self.app.save_data()
+            
+            # Persist collapsed state if the renamed category was collapsed
+            if old_name in self.collapsed_categories:
+                self.collapsed_categories.remove(old_name)
+                self.collapsed_categories.add(new_name)
+                # settings.collapsed_categories is updated in save_data() via list(profile_manager.collapsed_categories)
+                self.app.save_data()
+
             self.refresh_list()
 
     def toggle_category(self, category: str):
@@ -589,6 +611,30 @@ class ProfileManager:
             if hasattr(self.app, 'btn_delete_profile_top'):
                self.app.btn_delete_profile_top.configure(state="normal")
 
+    def on_category_expanded(self, event):
+        """Handle category expansion in treeview."""
+        tree = self.app.lb
+        item_id = tree.focus()
+        if item_id:
+            tags = tree.item(item_id, "tags")
+            if "category" in tags:
+                cat_name = tree.item(item_id, "text")
+                if cat_name in self.collapsed_categories:
+                    self.collapsed_categories.discard(cat_name)
+                    self.app.save_data()
+
+    def on_category_collapsed(self, event):
+        """Handle category collapse in treeview."""
+        tree = self.app.lb
+        item_id = tree.focus()
+        if item_id:
+            tags = tree.item(item_id, "tags")
+            if "category" in tags:
+                cat_name = tree.item(item_id, "text")
+                if cat_name not in self.collapsed_categories:
+                    self.collapsed_categories.add(cat_name)
+                    self.app.save_data()
+
     def select_initial_profile(self):
         """Select the first available profile if none selected."""
         if not self.app.profiles:
@@ -858,7 +904,9 @@ class ProfileManager:
             self.app.drag_data = {
                 "type": "category",
                 "item_id": item_id,
-                "data": tree.item(item_id, "text")
+                "data": tree.item(item_id, "text"),
+                "start_y": event.y,
+                "active": False
             }
         else:
             if item_id in self.item_map:
@@ -866,24 +914,42 @@ class ProfileManager:
                 self.app.drag_data = {
                     "type": "profile",
                     "item_id": item_id,
-                    "data": profile
+                    "data": profile,
+                    "start_y": event.y,
+                    "active": False
                 }
+
+    def on_drag_motion(self, event):
+        """Handle drag motion to distinguish click from drag."""
+        drag_data = getattr(self.app, 'drag_data', {})
+        if not drag_data:
+            return
+        # If moved by more than 5 pixels vertically, consider it an active drag
+        if abs(event.y - drag_data.get("start_y", event.y)) > 5:
+            drag_data["active"] = True
 
     def on_drag_drop(self, event):
         """Handle drag drop to reorder profiles and categories."""
+        drag_data = getattr(self.app, 'drag_data', {})
+        if not drag_data or not drag_data.get("active", False):
+            self.app.drag_data = {}
+            return
+
         tree = self.app.lb
         target_id = tree.identify_row(event.y)
         if not target_id:
+            self.app.drag_data = {}
             return
             
-        drag_data = getattr(self.app, 'drag_data', {})
-        if not drag_data or "type" not in drag_data:
+        if "type" not in drag_data:
+            self.app.drag_data = {}
             return
 
         drag_type = drag_data["type"]
         drag_item_id = drag_data["item_id"]
         if drag_item_id == target_id:
-             return
+            self.app.drag_data = {}
+            return
 
         target_tags = tree.item(target_id, "tags")
         target_parent = tree.parent(target_id)

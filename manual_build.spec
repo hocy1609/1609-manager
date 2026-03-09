@@ -12,6 +12,7 @@ hidden_imports.extend(collect_submodules('ui'))
 hidden_imports.extend(collect_submodules('utils'))
 # Explicitly add the module that was missing
 hidden_imports.append('core.log_monitor_manager')
+hidden_imports.append('pynput')
 
 a = Analysis(
     ['app.py'],
@@ -50,6 +51,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    uac_admin=True,
     icon=os.path.join('Assets', 'logo.ico')
 )
 
