@@ -141,6 +141,6 @@ cython_debug/
 nwn_manager.log
 nwn_settings.json
 
-# 1609 Manager Backups
-1609 settings/backups/
+# 1609 Manager settings and backups
+1609 settings/
 _old/
